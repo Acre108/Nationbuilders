@@ -17,7 +17,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 config/name="Hearthlands — First Bread"
 config/description="Milestone 1: a small village, a working bread chain."
 run/main_scene="res://view/village_view.tscn"
-config/features=PackedStringArray("4.7", "Forward Plus")
+config/features=PackedStringArray("4.3", "Forward Plus")
 
 [display]
 

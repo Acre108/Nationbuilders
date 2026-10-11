@@ -4,7 +4,7 @@ A Godot town-builder prototype for **milestone 1 / the week 4 gate**. Grow a sma
 
 ![The milestone 1 village with compact bottom controls](docs/first-bread.png)
 
-**Pinned engine: Godot 4.7.2 stable, official build `ed1daf0bf`**, installed locally at `C:\Program Files (x86)\Godot\Godot.exe`. The minimum is Godot 4.3; the simulation suite is also checked with official 4.3 stable (`77dcf97d8`). Use **Forward+** for the playable view: its outline pass needs the depth and normal buffers. Headless simulation needs no GPU.
+**Pinned engine: Godot 4.3 stable, official build `77dcf97d8`** ([download](https://godotengine.org/download/archive/4.3-stable/)). Use **Forward+** for the playable view: its outline pass needs the depth and normal buffers. Headless simulation needs no GPU.
 
 ## Play
 
@@ -52,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1
 powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1 -View
 ```
 
-Use `-Engine 'path\to\Godot.exe'` for another installation. The view suite opens an off-screen/hidden native window and needs a Forward+ GPU. Its screenshots are written to `artifacts/`.
+The wrapper defaults to `C:\Program Files (x86)\Godot\Godot.exe`; use `-Engine 'path\to\Godot.exe'` for another installation. The view suite opens an off-screen/hidden native window and needs a Forward+ GPU. Its screenshots are written to `artifacts/`.
 
 ```sh
 # Equivalent GPU-backed input/render tests:
@@ -65,7 +65,7 @@ The simulation suite covers content rejection, the complete carrier chain, house
 
 The reference seed reaches Tier 2 at **tick 237 / 23.7 seconds** and produces its first bread at **tick 359 / 35.9 seconds**, with the mill and bakery placed immediately after promotion. The gate test allows up to 1,800 ticks / 3 simulated minutes. It runs for a further five minutes to verify continuing supply and Tier 2 stability.
 
-Official Godot 4.3 Linux and Windows archives were downloaded into ignored `.tools/` before the installed engine was identified. Godot 4 uses the standard executable with `--headless`; it has no separate headless-only build. The Linux binary is available at `.tools/godot-linux/Godot_v4.3-stable_linux.x86_64`; it was **not executed here** because this Windows host has no WSL installation. All reported execution results are from Windows. Downloads: [official 4.3 archive](https://godotengine.org/download/archive/4.3-stable/).
+Godot 4 uses the standard executable with `--headless`; it has no separate headless-only build. All reported execution results are from Windows; Linux has not been run.
 
 ## Architecture and rules
 
