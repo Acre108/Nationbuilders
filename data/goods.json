@@ -1,0 +1,8 @@
+[
+  {"id":"wheat", "name":"Wheat", "color":"d9b958"},
+  {"id":"flour", "name":"Flour", "color":"eee0b1"},
+  {"id":"bread", "name":"Bread", "color":"ce8546"},
+  {"id":"water", "name":"Water", "color":"78b9c4"},
+  {"id":"logs", "name":"Logs", "color":"896447"},
+  {"id":"berries", "name":"Berries", "color":"b55b72"}
+]

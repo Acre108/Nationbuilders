@@ -1,0 +1,11 @@
+[gd_scene format=3]
+
+[node name="PixelViewport" type="SubViewport"]
+size = Vector2i(640, 360)
+own_world_3d = true
+render_target_update_mode = 4
+msaa_3d = 0
+screen_space_aa = 0
+use_taa = false
+
+[node name="World" type="Node3D" parent="."]
