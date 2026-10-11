@@ -1,5 +1,7 @@
 extends RefCounted
 ## Validated content only. No global class cache or scene tree is required.
+## Build menu categories, in display order.
+const CATEGORIES := {"housing":"Housing", "logistics":"Logistics", "resources":"Resources", "food":"Food"}
 var goods: Dictionary = {}
 var buildings: Dictionary = {}
 var tiers: Dictionary = {}
@@ -50,6 +52,8 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 			errors.append(prefix + "invalid footprint")
 		if row.get("kind", "") not in ["producer", "house", "storehouse", "road"]:
 			errors.append(prefix + "unknown kind")
+		if row.get("category", "") not in CATEGORIES:
+			errors.append(prefix + "unknown category")
 		for field in ["workers", "cycle_ticks", "unlock_tier", "input_capacity", "output_capacity"]:
 			if not _integer(row.get(field), 0 if field in ["workers", "cycle_ticks"] else 1):
 				errors.append(prefix + "invalid " + field)

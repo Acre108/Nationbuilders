@@ -23,15 +23,32 @@ func _run() -> void:
 	check(not view.hud.side.visible and not view.hud.build_menu.visible and not view.hud.toast.visible, "Start has no persistent text panels")
 	check(not view.hud.blocks_mouse(Vector2(640,40)), "Top of play screen is unobstructed")
 	await _click(view.hud.build_button.get_global_rect().get_center())
-	check(view.hud.build_menu.visible, "Build button opens menu")
+	check(view.hud.build_menu.visible and view.hud.category_list.visible and not view.hud.building_list.visible, "Build button opens category list")
+	check(view.hud.build_category_buttons.keys() == ["housing","logistics","resources","food"], "Build categories follow content order")
+	check(view.hud.supply_bar.visible and view.hud.supply_items.logs.visible and view.hud.supply_labels.logs.text == str(view.sim.stock("logs")), "Build menu shows log supply")
+	check(view.hud.supply_items.logs.get_child(0).texture != null, "Supply entry has a goods icon")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/build-menu.png")
+	await _click(view.hud.build_category_buttons.food.get_global_rect().get_center())
+	check(view.hud.building_list.visible and view.hud.build_title.text == "Food", "Category opens its building list")
+	check(view.hud.build_buttons.farm.visible and view.hud.build_buttons.bakery.visible and not view.hud.build_buttons.road.visible, "Category lists only its own buildings")
+	check(view.hud.build_details.farm.text == "4 Logs" and view.hud.build_details.bakery.text == "Needs Villagers", "Building rows show cost or unlock requirement")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/build-menu-food.png")
+	await _click(view.hud.build_back_button.get_global_rect().get_center())
+	check(view.hud.category_list.visible and not view.hud.build_back_button.visible, "Back returns to categories")
+	await _click(view.hud.build_category_buttons.logistics.get_global_rect().get_center())
 	await _click(view.hud.build_buttons.road.get_global_rect().get_center())
 	check(view.tool.selected == "road" and not view.hud.build_menu.visible, "Choosing a road closes build menu")
+	check(view.hud.placement_card.visible and "Free" in view.hud.placement_info.get_parsed_text(), "Placement card shows road requirements")
 	await _click_cell(Vector2i(14,23))
 	await _click_cell(Vector2i(16,23))
 	check(view.sim.grid.roads.has(Vector2i(15,23)), "Two world clicks build a road segment")
 	await _choose_build("well")
+	var well_card: String = view.hud.placement_info.get_parsed_text()
+	check(view.hud.placement_title.text == "Well" and "3 Logs" in well_card and "have" in well_card and "Workers" in well_card and "Water" in well_card, "Selected building lists cost, stock, workers and output")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/placement-card.png")
 	await _click_cell(Vector2i(15,24))
 	check(view.sim.grid.occupied.has(Vector2i(15,24)), "Toolbar + world click places well")
 	var count: int = view.sim.buildings.size()
@@ -116,6 +133,7 @@ func _click_cell(cell: Vector2i) -> void:
 
 func _choose_build(id: String) -> void:
 	await _click(view.hud.build_button.get_global_rect().get_center())
+	await _click(view.hud.build_category_buttons[view.sim.db.buildings[id].category].get_global_rect().get_center())
 	await _click(view.hud.build_buttons[id].get_global_rect().get_center())
 
 func _click(point: Vector2) -> void:

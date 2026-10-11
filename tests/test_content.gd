@@ -20,6 +20,10 @@ func run(t) -> void:
 	goods.append(goods[0].duplicate())
 	t.check(not db.validate(goods, buildings, tiers), "Reject duplicate content ids")
 	t.check(not db.validate({}, [], []), "Reject malformed root and absent tiers")
+	buildings[2].category = "wonders"
+	t.check(not db.validate(goods.slice(0, -1), buildings, tiers), "Reject unknown build menu category")
+	t.check("unknown category" in "; ".join(db.errors), "Unknown category has actionable diagnostic")
+	buildings[2].category = "food"
 	db.load_directory()
 	goods = db.goods.values().duplicate(true)
 	buildings = db.buildings.values().duplicate(true)
