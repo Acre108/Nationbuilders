@@ -1,7 +1,13 @@
 shader_type spatial;
 render_mode diffuse_lambert, specular_disabled;
+#include "res://atmosphere/shaders/atmosphere_clouds.gdshaderinc"
+#include "res://atmosphere/shaders/atmosphere_ground.gdshaderinc"
+varying vec3 world_position;
+void vertex() {
+	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
 void fragment() {
-	ALBEDO = COLOR.rgb;
+	ALBEDO = atmosphere_wet_albedo(COLOR.rgb) * atmosphere_cloud_shade(world_position);
 	ROUGHNESS = 1.0;
 }
 void light() {

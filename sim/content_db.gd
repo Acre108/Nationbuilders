@@ -1,6 +1,7 @@
 extends RefCounted
 ## Validated content only. No global class cache or scene tree is required.
 ## Build menu categories, in display order.
+const TERRAINS := ["grass", "forest", "rock", "marsh", "sand", "water", "stream", "river", "lake", "ocean"]
 const CATEGORIES := {"housing":"Housing", "logistics":"Logistics", "resources":"Resources", "food":"Food"}
 var goods: Dictionary = {}
 var buildings: Dictionary = {}
@@ -39,6 +40,8 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 			errors.append("Good %s needs a name" % id)
 		if not goods[id].get("color", "") is String or not Color.html_is_valid(goods[id].get("color", "")):
 			errors.append("Good %s needs a valid color" % id)
+		if goods[id].has("price") and not _integer(goods[id].price, 0):
+			errors.append("Good %s: price must be whole silver" % id)
 	for id in buildings:
 		var row: Dictionary = buildings[id]
 		var prefix := "Building %s: " % id
@@ -64,7 +67,12 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 			continue
 		if not tiers.has(int(row.get("unlock_tier", -1))):
 			errors.append(prefix + "unknown unlock tier")
-		if row.get("kind") == "producer" and (row.get("cycle_ticks", 0) < 1 or row.get("outputs", {}).is_empty()):
+		if row.has("forest_action"):
+			if row.kind != "producer" or row.forest_action not in ["cut","plant"] or not _integer(row.get("work_radius"),1):
+				errors.append(prefix + "invalid forestry job or work radius")
+			if not row.inputs.is_empty() or (row.forest_action == "plant" and not row.outputs.is_empty()):
+				errors.append(prefix + "forestry must use trees rather than recipe inputs; planting has no goods output")
+		if row.get("kind") == "producer" and (row.get("cycle_ticks", 0) < 1 or (row.get("outputs", {}).is_empty() and row.get("forest_action", "") != "plant")):
 			errors.append(prefix + "producer needs a cycle and outputs")
 		if row.get("inputs") is Dictionary and _total(row.inputs) > row.get("input_capacity", 0):
 			errors.append(prefix + "recipe exceeds input capacity")
@@ -78,7 +86,7 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 			errors.append(prefix + "terrain must be a nonempty array")
 		else:
 			for terrain in row.terrain:
-				if terrain not in ["grass", "forest", "water", "rock"]:
+				if terrain not in TERRAINS:
 					errors.append(prefix + "unknown terrain " + str(terrain))
 	for id in tiers:
 		var row: Dictionary = tiers[id]
@@ -102,6 +110,14 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 			for service in row.services:
 				if service != "shelter":
 					errors.append("Tier %s: unsupported service %s" % [id, service])
+	# A produced good's price comes from its chain; any other good needs a base price.
+	for id in goods:
+		var produced := false
+		for row in buildings.values():
+			if row.get("outputs") is Dictionary and row.outputs.has(id):
+				produced = true
+		if not produced and not goods[id].has("price"):
+			errors.append("Good %s: no building makes it, so it needs a price" % id)
 	if not tiers.has(1):
 		errors.append("Tier 1 is required")
 	for id in tiers:

@@ -18,7 +18,7 @@ func _run() -> void:
 		check(false, "Intentional runner exit-code probe")
 		quit(1)
 		return
-	for path in ["res://tests/test_content.gd", "res://tests/test_sim.gd"]:
+	for path in ["res://tests/test_content.gd", "res://tests/test_sim.gd", "res://tests/test_site.gd", "res://tests/test_rotation.gd", "res://tests/test_world.gd", "res://tests/test_forestry.gd", "res://tests/test_campaign.gd"]:
 		var script = load(path)
 		if script == null or not script.can_instantiate():
 			check(false, "Could not compile " + path)

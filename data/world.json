@@ -1,0 +1,18 @@
+{
+  "generator_version": 2,
+  "columns": 20,
+  "rows": 15,
+  "sea_fraction": 0.36,
+  "band_fractions": [0.40, 0.70, 0.86, 0.95],
+  "continent_scale": 0.16,
+  "detail_scale": 0.42,
+  "ridge_strength": 0.35,
+  "stream_flow": 4,
+  "river_flow": 9,
+  "great_river_flow": 18,
+  "lake_depth": 0.035,
+  "cold_temperature": 0.22,
+  "wet_moisture": 0.70,
+  "min_village_distance": 4,
+  "scout_radius": 2
+}

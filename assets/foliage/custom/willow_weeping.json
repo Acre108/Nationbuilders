@@ -1,0 +1,27 @@
+{
+  "asset": "willow_weeping",
+  "kind": "original procedural Blender mesh",
+  "generator": "tools/blender/make_weeping_willow.py",
+  "source": "tools/blender/sources/willow_weeping.blend",
+  "seed": 32032,
+  "units": "metres",
+  "up": "Y (glTF)",
+  "pivot": "trunk base at ground",
+  "materials": {
+    "bark": "POLY Nature Pack Polygon_Texture2 palette, reused from existing oak asset",
+    "leaves": "original narrow-leaf atlas; colours matched to POLY Nature oak"
+  },
+  "lods": {
+    "Near": {
+      "triangles": 13658,
+      "leaf_cards": 3885
+    },
+    "Far": {
+      "triangles": 3965,
+      "leaf_cards": 945
+    }
+  },
+  "placement": "explicit landmark; not automatically scattered",
+  "collision": "none; add a trunk collider when placed",
+  "reference_accuracy": "generic willow, not a surveyed Buchenhain specimen"
+}

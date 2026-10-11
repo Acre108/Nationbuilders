@@ -1,10 +1,15 @@
 extends RefCounted
 var selected := "inspect"
 var road_start := Vector2i(-1,-1)
+var rotation_quarters := 0
 
 func choose(id: String) -> void:
 	selected = id
 	road_start = Vector2i(-1,-1)
+	rotation_quarters = 0
+
+func rotate() -> void:
+	rotation_quarters = (rotation_quarters + 1) % 4
 
 func road_cells(to: Vector2i) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []

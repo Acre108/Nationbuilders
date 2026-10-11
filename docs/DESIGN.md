@@ -56,7 +56,9 @@ Each chartered village adds to its faction's power. Powerful factions make deman
 
 ## Art direction
 
-Low-poly 3D models with vertex colours, rendered to a low-resolution SubViewport (about 640×360). The camera is orthographic, fixed at a 30–45° pitch, and rotates in 90° steps. The image is upscaled by an integer factor with nearest-neighbour filtering and snapped to the pixel grid to prevent shimmer. Post-processing adds 1 px outlines (from depth and normals), toon lighting in 2–3 bands, a fixed 32–48 colour palette applied through a lookup table (LUT), and dithering only in shadows and fog. The UI draws on a separate crisp layer above the pixel shader.
+Stylised low-poly 3D, rendered smoothly at full display resolution with antialiasing. Buildings are Blender-authored medieval models that show their stock (sacks, barrels, sheaves). The environment is the SpacesOS foliage, lighting and atmosphere stack: natural sunlight with a golden late-afternoon default, day/night, weather, wind-driven trees and grass, and cloud shadows. The camera is orthographic, fixed at a 30–45° pitch, and rotates in 90° steps. The UI draws on a separate layer above the world.
+
+*Changed 11 Oct 2026:* the original pixel-art pipeline (a 640×360 viewport with nearest-neighbour upscaling, 1 px outlines, banded toon lighting and a 32–48 colour palette LUT) is dropped. Smooth rendering is the long-term look, and the remaining optional pixel view is being removed. [ART_DIRECTION.md](ART_DIRECTION.md) sets the direction for new assets; [VILLAGE_ART.md](VILLAGE_ART.md) records the current look and its tuning.
 
 ## Tech
 

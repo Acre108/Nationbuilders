@@ -14,10 +14,10 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
-config/name="Hearthlands — First Bread"
+config/name="Hearthlands â€” First Bread"
 config/description="Milestone 1: a small village, a working bread chain."
-run/main_scene="res://view/village_view.tscn"
-config/features=PackedStringArray("4.3", "Forward Plus")
+run/main_scene="res://view/main_menu.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
 
 [display]
 
@@ -31,3 +31,50 @@ window/size/min_height=640
 [rendering]
 
 environment/defaults/default_clear_color=Color(0.055, 0.09, 0.1, 1)
+
+[shader_globals]
+
+village_wind_time={
+"type": "float",
+"value": 0.0
+}
+village_environment_time={
+"type": "float",
+"value": 0.0
+}
+atmosphere_cloud_noise={
+"type": "sampler2D",
+"value": ""
+}
+atmosphere_cloud_offset={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+atmosphere_cloud_cover={
+"type": "float",
+"value": 0.0
+}
+atmosphere_cloud_shadow={
+"type": "float",
+"value": 0.0
+}
+atmosphere_wetness={
+"type": "float",
+"value": 0.0
+}
+atmosphere_night_lights={
+"type": "float",
+"value": 0.0
+}
+atmosphere_sun_direction={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+foliage_gust_scale={
+"type": "float",
+"value": 1.0
+}
+foliage_wind_scroll={
+"type": "vec2",
+"value": Vector2(0, 0)
+}

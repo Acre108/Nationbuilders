@@ -1,0 +1,11 @@
+[
+  {"id":"ocean", "name":"Ocean", "colour":"3f7480", "settleable":false, "harsh":false, "forest":0.0, "cliffs":0.0, "signature":{}, "rare":{}, "rare_count":0},
+  {"id":"peaks", "name":"Peaks", "colour":"ecece6", "settleable":false, "harsh":false, "forest":0.0, "cliffs":1.0, "signature":{}, "rare":{}, "rare_count":0},
+  {"id":"mountain_pass", "name":"Mountain pass", "colour":"85796a", "settleable":true, "harsh":true, "forest":0.25, "cliffs":0.8, "signature":{"iron_vein":3, "pasture":2}, "rare":{"coal_seam":1, "silver_lode":1, "salt":1}, "rare_count":1},
+  {"id":"tundra", "name":"Tundra", "colour":"b6c5c2", "settleable":true, "harsh":true, "forest":0.35, "cliffs":0.3, "signature":{"fish_shoals":2, "pasture":1}, "rare":{"trapline":5, "amber_shore":4, "sea_salt_flats":1}, "rare_count":1},
+  {"id":"marsh", "name":"Marsh", "colour":"4c6a5c", "settleable":true, "harsh":true, "forest":0.15, "cliffs":0.0, "signature":{"clay_bank":2, "dye_meadow":2, "fish_shoals":1}, "rare":{"peat_bog":1, "salt":1}, "rare_count":1},
+  {"id":"highland_hills", "name":"Highland hills", "colour":"6d7c45", "settleable":true, "harsh":false, "forest":0.45, "cliffs":0.6, "signature":{"iron_vein":3, "pasture":3, "oak_grove":1, "sunny_slope":1}, "rare":{}, "rare_count":0},
+  {"id":"coast", "name":"Coast", "colour":"aca581", "settleable":true, "harsh":false, "forest":0.3, "cliffs":0.35, "signature":{"fish_shoals":4, "oak_grove":2, "clay_bank":1, "pasture":1}, "rare":{}, "rare_count":0, "extra":{"sea_salt_flats":0.2}},
+  {"id":"riverland", "name":"Riverland", "colour":"5a8d55", "settleable":true, "harsh":false, "forest":0.5, "cliffs":0.1, "signature":{"fish_shoals":3, "clay_bank":3, "oak_grove":2, "dye_meadow":1}, "rare":{}, "rare_count":0},
+  {"id":"heartland", "name":"Heartland", "colour":"84a058", "settleable":true, "harsh":false, "forest":0.35, "cliffs":0.1, "signature":{"sunny_slope":3, "flower_heath":3, "pasture":2, "dye_meadow":2, "clay_bank":1}, "rare":{}, "rare_count":0}
+]

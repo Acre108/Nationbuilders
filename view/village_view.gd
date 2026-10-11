@@ -4,10 +4,30 @@ const Scenario = preload("res://sim/scenario.gd")
 const MeshFactory = preload("res://view/mesh_factory.gd")
 const CameraRig = preload("res://view/camera_rig.gd")
 const BuildTool = preload("res://view/build_tool.gd")
+const Building = preload("res://sim/building.gd")
+const BUILDING_PREVIEW = preload("res://render/building_preview.gdshader")
 const HUD = preload("res://view/overlays/village_hud.gd")
-const PaletteLUT = preload("res://render/palette_lut.gd")
+const VillageFoliage = preload("res://view/village_foliage.gd")
+const VillageAtmosphere = preload("res://view/village_atmosphere.gd")
+const TerrainRelief = preload("res://view/terrain_relief.gd")
+const Sites = preload("res://sim/world/sites.gd")
+const WorldMapScene = preload("res://view/world_map/world_map_view.tscn")
+signal campaign_map_requested
+signal campaign_menu_requested
+signal campaign_result_requested(outcome: String)
+var campaign
+@export var art_profile: Resource = preload("res://view/village_art.tres")
+var foliage
+var atmosphere: AtmosphereSystem
+## Hand-made site to play: --site=<name> on the command line, F4 to cycle.
+var site_name := "first_bread"
+var framed_site := ""
+var relief
+## The world map while it is open over this village; null otherwise.
+var world_map_view
+var weather_focus: Node3D
 var sim
-var factory := MeshFactory.new()
+var factory: MeshFactory
 var tool := BuildTool.new()
 var pixel_viewport: SubViewport
 var display: TextureRect
@@ -23,61 +43,60 @@ var scenery_root: Node3D
 var building_nodes: Dictionary = {}
 var carrier_nodes: Dictionary = {}
 var last_revision := -1
+var last_forest_revision := -1
+var deposit_nodes: Dictionary = {}
 var selected_uid := -1
 var hover_cell := Vector2i(-1,-1)
+var pointer_position := Vector2(-1,-1)
 var accumulator := 0.0
 var speed := 1
 var integer_scale := 2
-var pipeline_enabled := true
-var outline_material: ShaderMaterial
-var palette_material: ShaderMaterial
+var pixel_effect_enabled := false
 var hud_elapsed := 0.0
 var ghost_signature := ""
+var autosave_elapsed := 0.0
+var charter_offer_dismissed := false
+var card_previous_speed := 1
 
 func _ready() -> void:
+	factory = MeshFactory.new(art_profile)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pixel_viewport = preload("res://render/pixel_viewport.tscn").instantiate()
 	add_child(pixel_viewport)
 	world = pixel_viewport.get_node("World")
 	display = TextureRect.new()
 	display.texture = pixel_viewport.get_texture()
+	display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	display.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	display.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	palette_material = ShaderMaterial.new()
-	palette_material.shader = preload("res://render/palette.gdshader")
-	palette_material.set_shader_parameter("color_lut",PaletteLUT.create())
-	display.material = palette_material
 	add_child(display)
 	camera = CameraRig.new()
 	world.add_child(camera)
 	var light := DirectionalLight3D.new()
-	light.rotation_degrees = Vector3(-55,-35,0)
-	light.light_color = Color("f0e2bc")
-	light.light_energy = 1.05
-	light.shadow_enabled = true
+	LightingSettings.configure_sun(light)
 	light.directional_shadow_max_distance = 80
 	world.add_child(light)
 	var environment := WorldEnvironment.new()
-	var settings := Environment.new()
-	settings.background_mode = Environment.BG_COLOR
-	settings.background_color = Color("244043")
-	settings.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	settings.ambient_light_color = Color("b9bca3")
-	settings.ambient_light_energy = 0.7
-	settings.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	var settings := LightingSettings.make_daylight_environment()
 	environment.environment = settings
 	world.add_child(environment)
-	var quad := MeshInstance3D.new()
-	var shape := QuadMesh.new()
-	shape.size = Vector2(2,2)
-	quad.mesh = shape
-	quad.extra_cull_margin = 16384.0
-	outline_material = ShaderMaterial.new()
-	outline_material.shader = preload("res://render/outline.gdshader")
-	outline_material.render_priority = 100
-	quad.material_override = outline_material
-	quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	camera.add_child(quad)
+	foliage = VillageFoliage.new(art_profile)
+	world.add_child(foliage)
+	weather_focus = Node3D.new()
+	weather_focus.position = camera.focus
+	world.add_child(weather_focus)
+	atmosphere = VillageAtmosphere.new()
+	atmosphere.art = art_profile
+	atmosphere.profile = AtmosphereProfile.new()
+	atmosphere.profile.time_of_day = 16.0
+	atmosphere.profile.rain_radius = 30.0
+	atmosphere.profile.mist_haze_distance = 70.0
+	atmosphere.foliage_profile = foliage.profile
+	atmosphere.sun = light
+	atmosphere.world_environment = environment
+	atmosphere.weather_focus = weather_focus
+	world.add_child(atmosphere)
+	foliage.wind_source = atmosphere
 	for kind in ["buildings","roads","ghost","deposits","carriers","scenery"]:
 		var node := Node3D.new()
 		node.name = kind
@@ -92,37 +111,102 @@ func _ready() -> void:
 	hud = HUD.new()
 	add_child(hud)
 	hud.tool_selected.connect(_select_tool)
+	hud.rotation_requested.connect(_rotate_building)
 	hud.deposits_toggled.connect(_toggle_deposits)
+	hud.speed_selected.connect(_set_speed)
+	hud.restart_requested.connect(_restart)
+	hud.campaign_save_requested.connect(_save_campaign)
+	hud.campaign_menu_requested.connect(func(): campaign_menu_requested.emit())
+	hud.campaign_abandon_requested.connect(func(): _show_run_card("abandoned"))
+	hud.campaign_charter_requested.connect(func(): _show_run_card("charter"))
+	hud.run_choice_selected.connect(_run_choice)
+	hud.set_campaign_controls(campaign != null)
+	hud.pixel_effect_toggled.connect(_set_pixel_effect)
+	hud.weather_selected.connect(func(kind,intensity): atmosphere.set_weather(kind,intensity))
+	hud.time_of_day_selected.connect(atmosphere.set_time_of_day)
+	hud.clock_toggled.connect(func(running): atmosphere.profile.day_length_minutes = 2.0 if running else 0.0)
+	hud.fade_selected.connect(func(seconds): atmosphere.profile.weather_transition_seconds = seconds)
+	hud.wind_selected.connect(atmosphere.set_wind)
+	hud.weather_action.connect(_weather_action)
+	hud.world_map_requested.connect(open_world_map)
+	hud.workers_toggled.connect(_toggle_workers)
 	hud.inspection_closed.connect(func():
 		selected_uid = -1
-		hud.refresh(sim,selected_uid,tool.selected)
+		hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
 	)
 	resized.connect(_resize_display)
-	_resize_display()
-	_restart()
+	_set_pixel_effect(pixel_effect_enabled)
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--site=") and argument.trim_prefix("--site=") in Sites.NAMES:
+			site_name = argument.trim_prefix("--site=")
+	if campaign != null:
+		sim = campaign.village
+		_refresh_village()
+		_restore_campaign_view_state()
+	else:
+		_restart()
 	# Render smoke uses the same running scene and public commands.
 	if "--render-smoke" in OS.get_cmdline_user_args():
 		_render_smoke.call_deferred()
 
 func _resize_display() -> void:
-	integer_scale = maxi(1,mini(floori(size.x/640.0),floori(size.y/360.0)))
-	display.size = Vector2(640,360) * integer_scale
+	if pixel_effect_enabled:
+		integer_scale = maxi(1,mini(floori(size.x/640.0),floori(size.y/360.0)))
+		pixel_viewport.size = Vector2i(640,360)
+		display.size = Vector2(640,360) * integer_scale
+	else:
+		integer_scale = 1
+		# Keep the same framing, including letterboxing on wider/taller windows.
+		var fit := minf(size.x/640.0,size.y/360.0)
+		pixel_viewport.size = Vector2i((Vector2(640,360)*fit).floor()).max(Vector2i.ONE)
+		display.size = Vector2(pixel_viewport.size)
 	display.position = ((size-display.size)/2.0).floor()
+	ghost_signature = ""
+	if camera != null: camera.refresh()
+
+func _set_pixel_effect(enabled: bool) -> void:
+	pixel_effect_enabled = enabled
+	display.texture_filter = Control.TEXTURE_FILTER_NEAREST if enabled else Control.TEXTURE_FILTER_LINEAR
+	pixel_viewport.msaa_3d = Viewport.MSAA_DISABLED if enabled else Viewport.MSAA_4X
+	camera.pixel_snap_enabled = enabled
+	hud.set_pixel_effect(enabled)
+	_resize_display()
+
+func _display_to_viewport(point: Vector2) -> Vector2:
+	return (point-display.position)*Vector2(pixel_viewport.size)/display.size
 
 func _restart() -> void:
-	sim = Sim.new(73)
+	if campaign != null: return
+	# The milestone 1 map is generated by the sim itself, from its seed.
+	sim = Sim.new(73) if site_name == "first_bread" else Sim.new(73, null, Sites.named(site_name, null))
 	if not sim.valid or not Scenario.starter(sim):
 		push_error("Starter failed: " + sim.last_error)
 		get_tree().quit(1)
 		return
+	_refresh_village()
+
+func _refresh_village() -> void:
 	for root in [buildings_root,roads_root,carrier_root,scenery_root,deposits_root,ghost_root]:
 		_clear(root)
 	building_nodes.clear()
 	carrier_nodes.clear()
 	selected_uid = -1
 	factory.terrain(scenery_root,sim.grid)
+	relief = TerrainRelief.new(sim.grid)
+	relief.apply(factory)
+	_frame_site()
+	foliage.build(sim.grid)
+	atmosphere.reset_art_motion()
+	atmosphere.set_time_of_day(16.0)
+	atmosphere.set_weather(AtmosphereProfile.Weather.CLEAR,0.0,true)
+	atmosphere.profile.day_length_minutes = 0.0
+	atmosphere.wetness = 0.0
+	atmosphere.grid = sim.grid
+	atmosphere.profile.weather_transition_seconds = 8.0
+	atmosphere.reset_wind()
 	_build_scenery()
 	last_revision = -1
+	last_forest_revision = sim.grid.forest_revision
 	accumulator = 0
 	speed = 1
 	tool.choose("inspect")
@@ -130,30 +214,43 @@ func _restart() -> void:
 	_sync_view()
 	hud.configure_build_menu(sim.db)
 	hud.reset()
+	hud.set_pixel_effect(pixel_effect_enabled)
+	hud.set_speed(speed)
+	_sync_weather_hud()
 	hud.refresh(sim,selected_uid,tool.selected)
 
+func _sync_weather_hud() -> void:
+	hud.set_weather(atmosphere.get_target_weather(),atmosphere.get_target_amount())
+	hud.set_time_of_day(atmosphere.get_time_of_day(),atmosphere.profile.day_length_minutes > 0.0)
+	hud.set_wind(atmosphere.wind_from_degrees(),atmosphere.wind_breeze(),atmosphere.wind_gust_speed(),atmosphere.profile.weather_transition_seconds)
+	hud.set_weather_stats(atmosphere.weather_report())
+
+func _weather_action(id: String) -> void:
+	match id:
+		"strike": atmosphere.lightning.strike()
+		"soak": atmosphere.wetness = 1.0
+		"dry": atmosphere.wetness = 0.0
+	_sync_weather_hud()
+
 func _build_scenery() -> void:
-	for y in 40:
-		for x in 40:
-			var cell := Vector2i(x,y)
-			var tile: String = sim.grid.terrain_at(cell)
-			var at := Vector3(x+0.5,0,y+0.5)
-			if tile == "forest" and (x+y)%3 == 0:
-				var tree := Node3D.new()
-				tree.name = "tree_%d_%d" % [x,y]
-				tree.position = at
-				scenery_root.add_child(tree)
-				var height := 1.5 + float((x*13+y*7)%5)*0.18
-				factory.cylinder(tree,Vector3(0,0.4,0),0.12,0.8,Color("625144"))
-				factory.cylinder(tree,Vector3(0,height*0.62,0),0.64,height,Color("426b46"),0)
-				factory.cylinder(tree,Vector3(0,height*0.98,0),0.45,height*0.65,Color("54814d"),0)
-			elif tile == "rock":
-				factory.cylinder(scenery_root,at+Vector3.UP*0.3,0.45,0.7,Color("829080"),0.24)
-			var deposit: String = sim.grid.deposits[y*40+x]
-			if not deposit.is_empty():
-				var deposit_color := Color("d0b686") if deposit == "fertile_soil" else Color("8db9bf")
-				factory.box(deposits_root,at+Vector3.UP*0.025,Vector3(0.85,0.035,0.85),deposit_color)
+	deposit_nodes.clear()
+	_sync_deposits()
 	deposits_root.visible = false
+
+func _sync_deposits() -> void:
+	for y in sim.grid.height:
+		for x in sim.grid.width:
+			var cell := Vector2i(x,y)
+			var at := Vector3(x+0.5,relief.cell_height(cell),y+0.5)
+			var deposit: String = sim.grid.deposits[y*sim.grid.width+x]
+			if deposit.is_empty() and deposit_nodes.has(cell):
+				var removed: Node3D = deposit_nodes[cell]
+				deposits_root.remove_child(removed)
+				removed.queue_free()
+				deposit_nodes.erase(cell)
+			elif not deposit.is_empty() and not deposit_nodes.has(cell):
+				var deposit_color := Color("d6c288") if deposit == "fertile_soil" else Color("3a93a1")
+				deposit_nodes[cell] = factory.box(deposits_root,at+Vector3.UP*0.025,Vector3(0.85,0.035,0.85),deposit_color)
 
 func _process(delta: float) -> void:
 	if sim == null:
@@ -170,30 +267,57 @@ func _process(delta: float) -> void:
 	if Input.is_physical_key_pressed(KEY_D): pan.x += 1
 	if Input.is_physical_key_pressed(KEY_W): pan.y += 1
 	if Input.is_physical_key_pressed(KEY_S): pan.y -= 1
-	if pan != Vector2.ZERO:
+	if pan != Vector2.ZERO and not hud.options_menu.visible and not hud.run_card.visible:
 		camera.pan(pan.normalized(),delta)
+	weather_focus.position = camera.focus
 	_sync_view()
 	_update_ghost()
 	hud_elapsed += delta
 	if hud_elapsed >= 0.15:
 		hud_elapsed = 0
-		hud.refresh(sim,selected_uid,tool.selected)
+		hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
+		if hud.weather_menu.visible:
+			_sync_weather_hud()
+		if campaign != null:
+			hud.campaign_charter_button.disabled = not campaign.charter_available()
+			if not hud.run_card.visible:
+				if campaign.population() == 0: _show_run_card("ruin")
+				elif campaign.charter_available() and not charter_offer_dismissed: _show_run_card("charter")
+	if campaign != null:
+		autosave_elapsed += delta
+		if autosave_elapsed >= 120.0:
+			autosave_elapsed = 0.0
+			_save_campaign()
 
 func _sync_view() -> void:
+	var forest_changed: bool = last_forest_revision != sim.grid.forest_revision
 	if last_revision != sim.grid.revision:
 		_clear(roads_root)
 		for cell in sim.grid.roads:
-			factory.box(roads_root,Vector3(cell.x+0.5,0.035,cell.y+0.5),Vector3(0.98,0.06,0.98),Color("b9a983"))
+			# One holder per tile so a road on a ramp can tilt with it.
+			var tile := Node3D.new()
+			roads_root.add_child(tile)
+			factory.road(tile,cell,sim.grid)
+			relief.seat(tile,cell)
+		# The approach visibly continues beyond the playable western boundary.
+		if not sim.site.footprint.has(0) and not sim.site.entrance_road.is_empty() and sim.grid.roads.has(sim.site.entrance_road[0]):
+			for x in range(-4,0):
+				factory.road(roads_root,Vector2i(x,sim.site.entrance_road[0].y),sim.grid)
 		for uid in building_nodes.keys():
 			if not sim.buildings.has(uid):
 				building_nodes[uid].queue_free()
 				building_nodes.erase(uid)
-		for child in scenery_root.get_children():
-			if child.name.begins_with("tree_"):
-				var parts := str(child.name).split("_")
-				var cell := Vector2i(int(parts[1]),int(parts[2]))
-				child.visible = not sim.grid.occupied.has(cell) and not sim.grid.roads.has(cell)
+		foliage.sync_grid(sim.grid)
+		factory.sync_ground_context(sim.grid)
 		last_revision = sim.grid.revision
+	elif forest_changed:
+		foliage.sync_grid(sim.grid)
+	if forest_changed:
+		factory.sync_forest_ground(sim.grid)
+		_sync_deposits()
+		last_forest_revision = sim.grid.forest_revision
+		ghost_signature = ""
+	foliage.sync_growth(sim.grid,sim.tick)
 	for building in sim.buildings.values():
 		var node: Node3D = building_nodes.get(building.uid)
 		if node != null and int(node.get_meta("tier")) != building.tier:
@@ -203,23 +327,26 @@ func _sync_view() -> void:
 		if node == null:
 			node = factory.building(building.definition,building.tier)
 			node.set_meta("tier",building.tier)
-			node.position = Vector3(building.cell.x+float(building.definition.footprint[0])/2.0,0,building.cell.y+float(building.definition.footprint[1])/2.0)
+			var footprint: Vector2i = building.footprint()
+			node.position = Vector3(building.cell.x+float(footprint.x)/2.0,relief.cell_height(building.cell),building.cell.y+float(footprint.y)/2.0)
+			node.rotation.y = building.rotation_quarters * PI / 2.0
 			buildings_root.add_child(node)
 			building_nodes[building.uid] = node
+		factory.medieval.sync_stock(node, building)
 		if node.has_node("Sails") and building.status == "working":
 			node.get_node("Sails").rotation.z = float(sim.tick) * 0.035
 	for carrier in sim.carriers:
 		var node: Node3D = carrier_nodes.get(carrier.uid)
 		if node == null:
 			node = Node3D.new()
-			factory.box(node,Vector3(0,0.20,0),Vector3(0.20,0.3,0.20),Color("416c80"))
-			factory.box(node,Vector3(0,0.42,0),Vector3(0.17,0.16,0.17),Color("e1cea1"))
+			factory.box(node,Vector3(0,0.20,0),Vector3(0.20,0.3,0.20),Color("4b5057"))
+			factory.box(node,Vector3(0,0.42,0),Vector3(0.17,0.16,0.17),Color("d8cdb4"))
 			var parcel := factory.box(node,Vector3(0,0.58,0),Vector3(0.25,0.22,0.25),Color.WHITE)
 			parcel.name = "Parcel"
 			carrier_root.add_child(node)
 			carrier_nodes[carrier.uid] = node
 		# Tick positions keep pixels stable; presentation does not influence travel.
-		node.position = Vector3(carrier.cell.x+0.5,0.06,carrier.cell.y+0.5)
+		node.position = Vector3(carrier.cell.x+0.5,0.06+relief.cell_height(carrier.cell),carrier.cell.y+0.5)
 		node.visible = sim.grid.roads.has(carrier.cell)
 		var parcel: MeshInstance3D = node.get_node("Parcel")
 		parcel.visible = not carrier.cargo.is_empty()
@@ -227,7 +354,7 @@ func _sync_view() -> void:
 			var arrays: Array = parcel.mesh.surface_get_arrays(0)
 			var colors := PackedColorArray()
 			colors.resize(arrays[Mesh.ARRAY_VERTEX].size())
-			colors.fill(Color.html(sim.db.goods[carrier.cargo].color))
+			colors.fill(Color.html(sim.db.goods[carrier.cargo].color).srgb_to_linear())
 			arrays[Mesh.ARRAY_COLOR] = colors
 			var mesh := ArrayMesh.new()
 			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
@@ -242,53 +369,79 @@ func _sync_view() -> void:
 			carrier_nodes.erase(uid)
 
 func _update_ghost() -> void:
-	var mouse := get_global_mouse_position()
+	var mouse := pointer_position
 	if tool.selected == "inspect" or hud.blocks_mouse(mouse) or not display.get_global_rect().has_point(mouse):
 		ghost_root.visible = false
 		return
-	hover_cell = camera.cell_at((mouse-display.position)/integer_scale)
-	var signature := "%s:%s:%s:%s" % [hover_cell,tool.selected,tool.road_start,sim.grid.revision]
+	hover_cell = _cell_at(_display_to_viewport(mouse))
+	var signature := "%s:%s:%s:%s:%s" % [hover_cell,tool.selected,tool.road_start,tool.rotation_quarters,sim.grid.revision]
 	ghost_root.visible = true
 	if signature == ghost_signature:
 		return
 	ghost_signature = signature
 	_clear(ghost_root)
 	var cells: Array[Vector2i] = [hover_cell]
-	var color := Color("8db9bf")
+	var color := Color("3a93a1")
 	if tool.selected == "road":
 		cells = tool.road_cells(hover_cell)
 	elif sim.db.buildings.has(tool.selected):
 		cells.clear()
 		var row: Dictionary = sim.db.buildings[tool.selected]
-		for y in int(row.footprint[1]):
-			for x in int(row.footprint[0]):
+		var footprint := Building.rotated_footprint(row, tool.rotation_quarters)
+		for y in footprint.y:
+			for x in footprint.x:
 				cells.append(hover_cell+Vector2i(x,y))
-		color = Color("94a85e") if sim.placement_error(tool.selected,hover_cell).is_empty() else Color("ad6b50")
+		color = Color("a8c46b") if sim.placement_error(tool.selected,hover_cell,tool.rotation_quarters).is_empty() else Color("9a5440")
+		var preview := factory.building(row, 1)
+		preview.name = "Preview"
+		preview.position = Vector3(hover_cell.x+float(footprint.x)/2.0,relief.cell_height(hover_cell),hover_cell.y+float(footprint.y)/2.0)
+		preview.rotation.y = tool.rotation_quarters * PI / 2.0
+		var preview_material := ShaderMaterial.new()
+		preview_material.shader = BUILDING_PREVIEW
+		preview_material.set_shader_parameter("tint", color)
+		_apply_preview_material(preview, preview_material)
+		ghost_root.add_child(preview)
 	elif tool.selected == "demolish":
-		color = Color("ad6b50")
+		color = Color("9a5440")
 	for cell in cells:
 		if not sim.grid.inside(cell): continue
 		for edge in [Vector3(0,0,-0.47),Vector3(0,0,0.47)]:
-			factory.box(ghost_root,Vector3(cell.x+0.5,0.09,cell.y+0.5)+edge,Vector3(0.98,0.055,0.045),color)
+			factory.box(ghost_root,Vector3(cell.x+0.5,0.09+relief.cell_height(cell),cell.y+0.5)+edge,Vector3(0.98,0.055,0.045),color)
 		for edge in [Vector3(-0.47,0,0),Vector3(0.47,0,0)]:
-			factory.box(ghost_root,Vector3(cell.x+0.5,0.09,cell.y+0.5)+edge,Vector3(0.045,0.055,0.98),color)
+			factory.box(ghost_root,Vector3(cell.x+0.5,0.09+relief.cell_height(cell),cell.y+0.5)+edge,Vector3(0.045,0.055,0.98),color)
+
+func _input(event: InputEvent) -> void:
+	# Read the same viewport coordinates used by placement clicks, including
+	# input sent through the viewport during tests.
+	if event is InputEventMouse: pointer_position = event.position
 
 func _unhandled_input(event: InputEvent) -> void:
+	if hud.run_card.visible:
+		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE and hud.run_card_kind != "ruin": _run_choice("keep")
+		get_viewport().set_input_as_handled()
+		return
+	if hud.options_menu.visible:
+		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
+			hud.close_options_menu()
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
+		if atmosphere.handle_debug_key(event.physical_keycode):
+			return
 		match event.physical_keycode:
 			KEY_Q: camera.rotate_quarter(-1)
 			KEY_E: camera.rotate_quarter(1)
-			KEY_SPACE: speed = 1 if speed == 0 else 0
+			KEY_R: _rotate_building()
+			KEY_SPACE: _set_speed(1 if speed == 0 else 0)
 			KEY_ESCAPE:
 				hud.close_build_menu()
+				hud.close_weather_menu()
 				selected_uid = -1
 				_select_tool("inspect")
-			KEY_F2:
-				pipeline_enabled = not pipeline_enabled
-				palette_material.set_shader_parameter("enabled",pipeline_enabled)
-				outline_material.set_shader_parameter("enabled",pipeline_enabled)
 			KEY_F3:
 				_toggle_deposits()
+			KEY_F4:
+				_cycle_site()
+			KEY_HOME: _overview_site()
 		ghost_signature = ""
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
@@ -303,7 +456,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			camera.zoom(1)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			_act(camera.cell_at((event.position-display.position)/integer_scale))
+			_act(_cell_at(_display_to_viewport(event.position)))
 		ghost_signature = ""
 
 func _select_tool(id: String) -> void:
@@ -312,11 +465,29 @@ func _select_tool(id: String) -> void:
 	if id != "inspect":
 		hud.close_build_menu()
 		selected_uid = -1
-	hud.refresh(sim,selected_uid,tool.selected)
+	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
+
+func _rotate_building() -> void:
+	if not sim.db.buildings.has(tool.selected) or tool.selected == "road": return
+	if hud.options_menu.visible or hud.weather_menu.visible or hud.build_menu.visible: return
+	tool.rotate()
+	ghost_signature = ""
+	_update_ghost()
+	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
+
+func _apply_preview_material(node: Node, preview_material: Material) -> void:
+	if node is MeshInstance3D:
+		node.material_override = preview_material
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for child in node.get_children(): _apply_preview_material(child, preview_material)
 
 func _toggle_deposits() -> void:
 	deposits_root.visible = not deposits_root.visible
 	hud.set_deposits_visible(deposits_root.visible)
+
+func _set_speed(value: int) -> void:
+	speed = value
+	hud.set_speed(value)
 
 func _act(cell: Vector2i) -> void:
 	if tool.selected == "inspect":
@@ -332,21 +503,126 @@ func _act(cell: Vector2i) -> void:
 		var ok: bool = sim.demolish(cell)
 		if not ok: hud.show_error(sim.last_error)
 	else:
-		var ok: bool = sim.place(tool.selected,cell)
+		var ok: bool = sim.place(tool.selected,cell,tool.rotation_quarters)
 		if not ok: hud.show_error(sim.last_error)
 	_sync_view()
-	hud.refresh(sim,selected_uid,tool.selected)
+	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
 
 func _complete_chain() -> void:
 	# Check both footprints and total cost before either mutation.
-	var reason: String = sim.placement_error("mill",Vector2i(16,18))
-	if reason.is_empty(): reason = sim.placement_error("bakery",Vector2i(23,18))
+	var reason: String = sim.placement_error("mill",Vector2i(16,18)+Scenario.offset(sim))
+	if reason.is_empty(): reason = sim.placement_error("bakery",Vector2i(23,18)+Scenario.offset(sim))
 	if reason.is_empty() and sim.stock("logs") < 16: reason = "Need 16 logs"
 	if not reason.is_empty():
 		hud.show_error(reason)
 		return
 	Scenario.complete_chain(sim)
 	_sync_view()
+
+func _cell_at(pixel: Vector2) -> Vector2i:
+	return camera.cell_at(pixel,relief.surface_height,relief.top)
+
+## Pan limits follow the site; a newly shown site is framed on its founding spot.
+func _frame_site() -> void:
+	camera.bounds = Rect2(4.0,4.0,sim.grid.width-9.0,sim.grid.height-9.0)
+	if sim.site.footprint.has(0): camera.zoom_max = maxf(48.0, maxf(sim.grid.width, sim.grid.height) * 1.15)
+	if framed_site != sim.site.name:
+		framed_site = sim.site.name
+		camera.focus = Vector3(sim.site.founding_spot.x+5,0,sim.site.founding_spot.y-3)
+		camera.refresh()
+
+func _overview_site() -> void:
+	camera.focus = Vector3(sim.grid.width * 0.5, 0, sim.grid.height * 0.5)
+	camera.zoom_size = camera.zoom_max
+	camera.refresh()
+
+func _cycle_site() -> void:
+	if campaign != null: return
+	site_name = Sites.NAMES[(Sites.NAMES.find(site_name)+1)%Sites.NAMES.size()]
+	_restart()
+
+## Shows the world map in place of the village. The village stays loaded but
+## hidden, paused and not rendering, and comes back exactly as it was.
+func _save_campaign() -> void:
+	if campaign != null:
+		capture_campaign_view_state()
+		hud.show_error("Campaign saved." if campaign.save() else campaign.last_error)
+
+func capture_campaign_view_state() -> void:
+	if campaign == null: return
+	campaign.village_view_state = {
+		"village_id": campaign.active_village, "focus": camera.focus,
+		"quarter_turn": camera.quarter_turn, "zoom_size": camera.zoom_size,
+		"speed": card_previous_speed if hud.run_card.visible else speed,
+		"pixel_effect": pixel_effect_enabled, "deposits": deposits_root.visible,
+		"charter_offer_dismissed": charter_offer_dismissed,
+		"time_of_day": atmosphere.get_time_of_day(), "clock": atmosphere.profile.day_length_minutes,
+		"weather": int(atmosphere.get_target_weather()), "amount": atmosphere.get_target_amount(),
+		"wind_from": atmosphere.wind_from_degrees(), "breeze": atmosphere.wind_breeze(),
+		"gust_speed": atmosphere.wind_gust_speed(), "fade": atmosphere.profile.weather_transition_seconds,
+		"wetness": atmosphere.wetness
+	}
+
+func _restore_campaign_view_state() -> void:
+	var state: Dictionary = campaign.village_view_state
+	if state.is_empty() or state.get("village_id", "") != campaign.active_village: return
+	camera.focus = state.get("focus", camera.focus)
+	camera.quarter_turn = state.get("quarter_turn", 0)
+	camera.zoom_size = state.get("zoom_size", 22.0)
+	camera.refresh()
+	_set_speed(state.get("speed", 1))
+	_set_pixel_effect(state.get("pixel_effect", false))
+	deposits_root.visible = state.get("deposits", false)
+	hud.set_deposits_visible(deposits_root.visible)
+	charter_offer_dismissed = state.get("charter_offer_dismissed", false)
+	atmosphere.set_time_of_day(state.get("time_of_day", 16.0))
+	atmosphere.profile.day_length_minutes = state.get("clock", 0.0)
+	atmosphere.set_weather(state.get("weather", AtmosphereProfile.Weather.CLEAR), state.get("amount", 0.0), true)
+	atmosphere.profile.weather_transition_seconds = state.get("fade", 8.0)
+	atmosphere.set_wind(state.get("wind_from", 0.0), state.get("breeze", 1.0), state.get("gust_speed", 1.0))
+	atmosphere.wetness = state.get("wetness", 0.0)
+	_sync_weather_hud()
+
+func _show_run_card(kind: String) -> void:
+	if campaign == null or hud.run_card.visible: return
+	if kind == "charter" and not campaign.charter_available(): return
+	card_previous_speed = speed
+	_set_speed(0)
+	hud.show_run_card(kind, campaign.village_name, sim.unlocked_tier, campaign.population(), sim.tick)
+
+func _run_choice(choice: String) -> void:
+	if choice == "keep":
+		if hud.run_card_kind == "charter": charter_offer_dismissed = true
+		hud.close_run_card()
+		_set_speed(card_previous_speed)
+	else:
+		campaign_result_requested.emit(choice)
+
+func open_world_map() -> void:
+	if campaign != null:
+		campaign_map_requested.emit()
+		return
+	if world_map_view != null:
+		return
+	world_map_view = WorldMapScene.instantiate()
+	world_map_view.show_back = true
+	world_map_view.back_requested.connect(close_world_map)
+	get_parent().add_child(world_map_view)
+	# The HUD is a CanvasLayer, so it does not inherit visibility from this control.
+	visible = false
+	hud.visible = false
+	process_mode = Node.PROCESS_MODE_DISABLED
+	pixel_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+
+func close_world_map() -> void:
+	if world_map_view == null:
+		return
+	world_map_view.queue_free()
+	world_map_view = null
+	visible = true
+	hud.visible = true
+	process_mode = Node.PROCESS_MODE_INHERIT
+	pixel_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 
 func _clear(root: Node) -> void:
 	for child in root.get_children():
@@ -366,3 +642,9 @@ func _render_smoke() -> void:
 	var result := image.save_png("res://artifacts/render-smoke.png")
 	print("RENDER SMOKE: %dx%d; integer scale %d; bread %d; screenshot %s" % [image.get_width(),image.get_height(),integer_scale,int(sim.produced.get("bread",0)),result])
 	get_tree().quit(0 if result == OK else 1)
+
+func _toggle_workers() -> void:
+	var building = sim.buildings.get(selected_uid)
+	if building != null and not sim.set_workers_enabled(selected_uid, not building.workers_enabled):
+		hud.show_error(sim.last_error)
+	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)

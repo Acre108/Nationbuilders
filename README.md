@@ -2,34 +2,63 @@
 
 A Godot town-builder prototype for **milestone 1 / the week 4 gate**. Grow a small settlement from its first water deliveries to a working wheat → flour → bread chain. All gameplay code is GDScript.
 
-![The milestone 1 village with compact bottom controls](docs/first-bread.png)
+![Late-afternoon village with a warm clearing and cool forest](docs/atmosphere-after.png)
 
-**Pinned engine: Godot 4.3 stable, official build `77dcf97d8`** ([download](https://godotengine.org/download/archive/4.3-stable/)). Use **Forward+** for the playable view: its outline pass needs the depth and normal buffers. Headless simulation needs no GPU.
+**Pinned engine: Godot 4.7.2 stable** (Forward+). The imported SpacesOS environment systems require the newer lighting API. Headless simulation needs no GPU.
+
+## Environment systems
+
+The [project-wide art direction](docs/ART_DIRECTION.md) uses the village as the visual foundation: golden clearings, cool woodland, terracotta and cream materials, and quiet shared environmental motion. It defines the common palette and the next refinements for the world map.
+
+Foliage, lighting, and atmosphere have been ported from SpacesOS and connected to the village. See [the port notes](docs/ENVIRONMENT_PORT.md) for scope and controls. Use `[` / `]` to change the hour, `0` to run the day/night cycle, and `5` through `9` for storm, mist, clear, cloudy, and rain.
+
+The village art pass adds golden 16:00 sunlight, cool forest shade, contact shadows, broad terrain colour regions, embedded ochre paths and sparse shared wind/cloud motion. Tune the exported values in [view/village_art.tres](view/village_art.tres); see [the art guide and before/after](docs/VILLAGE_ART.md). Run `tools/run_tests.ps1 -Art` for its GPU regression checks.
+
+The reference refinement adds fuller amber-lit crowns, brighter direct palette response, clay roof courses, stone wall feet, framed windows and richer clustered meadow details. The current default map surrounds the central settlement with woodland and natural clearings.
+
+The [medieval building kit](docs/MEDIEVAL_BUILDINGS.md) adds Blender-authored timber frames, stonework, shutters, steep roofs and distinct workshop details. Production buildings display live input and output goods as sheaves, flour sacks, water barrels, bread trays and timber bundles. The editable Blender source and stock/empty previews are linked in the guide; run `tools/run_tests.ps1 -Buildings` to verify stock changes and generate review captures.
+
+On a fresh checkout, open the project in Godot 4.7.2 to import its assets before playing or running view tests. The simulation runner remains independent of the environment.
 
 ## Play
 
-Import [project.godot](project.godot) in Godot and press **F6** on `view/village_view.tscn`, or **F5** to run the project. The main scene is already set. A 1280×720 or larger window is recommended.
+Import [project.godot](project.godot) in Godot and press **F5** to open the main menu. A 1280 by 720 or larger window is recommended; the menu also fits the 960 by 640 minimum window.
 
-The starting village contains a field, storehouse with six carriers, well, woodcutter, homestead, and connected roads. Founding supplies are 100 logs and 36 berries, before construction costs. Wheat, flour and bread start at zero.
+1. Enter a campaign name and world seed, or choose **Random seed**, then **Generate world**. The new campaign is saved immediately.
+2. On the world map, the starting region is selected. Click another hex to choose a site; oceans and peaks cannot be settled. Name your village and choose **Found first village**.
+3. In the village, the map button saves progress and returns to the campaign world. Choose **Resume** to continue the village. The cog offers **Save campaign** and **Save & main menu**. Campaigns also save when closing the game normally.
+4. Select a campaign under **Saved campaigns** and choose **Load campaign** to reopen its world and resume its village.
 
-1. Watch the well supply the storehouse. The homestead consumes water and berries and becomes **Villagers** after 20 consecutive satisfied seconds (about 24 seconds after starting).
+Campaigns are independent files in Godot's `user://campaigns` folder. Saves preserve the complete village simulation, including carrier cargo/routes, household savings, production, stopped workers and regrowing trees. Writes replace the previous save only after the new file is complete; failures stay on the current screen with a message. Damaged saves and incompatible save/generator/game-data versions are rejected. One active village is supported per campaign. The first village uses the tested starter clearing, with its local seed, biome, woodland density and coastal water derived from the selected region; detailed biome-specific site relief and additional production chains remain future work.
+
+For the standalone development village, press **F6** on `view/village_view.tscn`. Its restart and F4 site controls remain available outside a campaign.
+
+The [world map art pass](docs/WORLD_MAP_ART.md) adds sculpted hex landscapes, imported nature scenery, riverbanks and coastal shelves. It follows the village's golden afternoon light, green/gold meadow palette, cool forest shade and shared breeze, with broader mountain ridges and sparse water glints. Press **L** on the map to compare separate tile dioramas with linked terrain and groves; hex borders remain visible in both modes. The mouse wheel zooms in for tile inspection, and the village hour/weather shortcuts work on the map. Run `tools/run_tests.ps1 -WorldMap` for its rendering, motion and interaction checks.
+
+The village starts in a smooth full-resolution view with antialiasing. Open the top-right cog and click **Pixel effect: Off** to enable the optional pixel view. Click again to return to smooth rendering. The choice stays when restarting the village; a new app session starts in smooth mode. Smooth rendering is the long-term look, and the pixel view is scheduled for removal.
+
+The default village map is **100 × 100 tiles**. The village sits in a central clearing, reached by a road from the western map edge. Woodland groves and smaller clearings fill the surrounding land. The starting village contains a field, storehouse with six carriers, well, woodcutter, homestead, and connected roads. Founding supplies are 100 logs and 36 berries, before construction costs. Wheat, flour and bread start at zero.
+
+1. Watch carriers stock the homestead's pantry with water from the well and berries from the storehouse. The homestead eats from its pantry and becomes **Villagers** after 20 consecutive satisfied seconds (about 23 seconds after starting).
 2. Open **Build**, choose **Windmill** or **Bakery**, and place each against a road. They unlock when the first house reaches Tier 2.
-3. Carriers transport wheat to the mill, flour and water to the bakery, and bread to storage. Bread, water and logs sustain Tier 2. The house gains a taller wall and a blue-green roof on upgrade.
-4. Click a building to see its name, tier and status. The play screen has three bottom buttons: **Demolish**, **Deposits** and **Build**. Resource totals remain in the simulation and are not displayed.
+3. Carriers transport wheat to the mill, flour and water to the bakery, and bread to storage. Bread, water and logs sustain Tier 2. The house gains a taller wall and a slate roof on upgrade.
+4. Click a building for detailed inspection: status, workers, recipe, local goods and cycle progress; houses show happiness, needs met (with prices in silver), pantry, savings, wages, tax and tier timing; workshops show what they sell and for how much; storehouses show inventory, carriers, their trading purse and the village treasury in gold. The build card shows what the treasury pays. **Stop workers** releases a building's workers to other jobs; **Resume workers** takes them back. The play screen has three bottom buttons: **Demolish**, **Deposits** and **Build**. The top-right cog opens options. Global resource counters are hidden.
 
 | Control | Action |
 | --- | --- |
-| Build + choice + left click | Place a building; green/red outline indicates a valid/invalid footprint |
+| Build + choice + left click | Place the previewed building; green/red outline indicates a valid/invalid footprint |
+| R / Rotate button while building | Rotate 90°; rectangular footprints swap width and depth |
 | Road tool | Click start and end tiles; creates an orthogonal L-shaped road atomically |
-| Left click a building | Show its compact inspector |
+| Left click a building | Show its detailed inspector |
 | Demolish + left click | Remove road/building; contents are discarded and construction is not refunded |
 | Right click / Escape | Cancel and return to Inspect |
 | WASD | Pan camera |
 | Q / E | Rotate 90° |
 | Mouse wheel | Change orthographic zoom in steps |
 | Space | Pause / resume |
-| F2 | Compare raw toon lighting with outline + palette processing |
 | Deposits / F3 | Show fertile soil in gold and timber in blue |
+| F4 | Switch site: First Bread ↔ Terraces (a 60×60 test site with cliffs, ramps, a waterfall and a river). `-- --site=terraces` starts there |
+| Top-right cog | Options: pause / 1× / 3×, restart village |
 
 Roads must share an edge with a building. Carriers use only road tiles, with no diagonal movement. An occupied road cannot be demolished until its carrier moves away. Disconnecting a route strands deliveries until a connection is restored. When a destination is demolished, any carried item is returned to its owner's storehouse if reachable.
 
@@ -50,6 +79,7 @@ For the installed Windows GUI executable, the wrapper waits for the actual proce
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1
 powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1 -View
+powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1 -Campaign
 ```
 
 The wrapper defaults to `C:\Program Files (x86)\Godot\Godot.exe`; use `-Engine 'path\to\Godot.exe'` for another installation. The view suite opens an off-screen/hidden native window and needs a Forward+ GPU. Its screenshots are written to `artifacts/`.
@@ -61,25 +91,25 @@ godot --script tests/run_view_tests.gd
 godot -- --render-smoke
 ```
 
-The simulation suite covers content rejection, the complete carrier chain, house promotion and demotion, placement/road atomicity, workforce limits, local capacity, road-only A*, nearest reachable storage, interrupted-trip recovery, conservation of every good, new content without sim changes, and deterministic replay across tick batch sizes. The rendering suite sends real viewport mouse/key events and checks the build menu, deposits toggle, building controls, a 32-colour world, exact 2×2 pixels, and an active outline pass.
+The simulation suite covers content rejection, the complete carrier chain, house promotion and demotion, placement/road atomicity, workforce limits, local capacity, road-only A*, nearest reachable storage, interrupted-trip recovery, conservation of every good, new content without sim changes, and deterministic replay across tick batch sizes. The rendering suite sends real viewport input and checks the menus, building controls, direct world colors beyond the old 32-color limit, and 2-by-2 viewport scaling.
 
-The reference seed reaches Tier 2 at **tick 237 / 23.7 seconds** and produces its first bread at **tick 359 / 35.9 seconds**, with the mill and bakery placed immediately after promotion. The gate test allows up to 1,800 ticks / 3 simulated minutes. It runs for a further five minutes to verify continuing supply and Tier 2 stability.
+The reference seed reaches Tier 2 at **tick 229 / 22.9 seconds** and produces its first bread at **tick 357 / 35.7 seconds**, with the mill and bakery placed immediately after promotion. The gate test allows up to 1,800 ticks / 3 simulated minutes. It runs for a further five minutes to verify continuing supply and Tier 2 stability.
 
 Godot 4 uses the standard executable with `--headless`; it has no separate headless-only build. All reported execution results are from Windows; Linux has not been run.
 
 ## Architecture and rules
 
-- `sim/`: only plain `RefCounted` classes. No nodes, scenes, rendering, frame delta, or global random calls. A single seeded Park–Miller RNG generates the 40×40 terrain and one deposit layer.
+- `sim/`: only plain `RefCounted` classes. No nodes, scenes, rendering, frame delta, or global random calls. A village runs on a *site package* (`sim/world/`): size, terrain, levels, ramps, deposits and the buildable reach. Without one, the seeded Park–Miller RNG generates the default 100×100 coastal map. The coast follows the map dimensions; the starter layout shifts to the central clearing. Trees, saplings and stumps are authoritative simulation state. `SitePackage.DEFAULT_SIZE` defines the default; an explicit 40×40 generator size remains available for reference fixtures. Carriers and roads cross level changes only on ramps; buildings need flat, level ground inside the reach. See [the world map design](docs/WORLD_MAP.md).
 - `data/`: goods, building recipes/footprints/costs/workers/capacities, and per-house needs. `content_db.gd` validates JSON and cross-references; a load failure stops startup with diagnostics. Producers are generic: add a JSON definition to add a building or recipe. The view supplies a generic placeholder mesh for unfamiliar building ids.
 - `view/`: reads state, creates vertex-coloured primitive meshes, and sends commands. The view's accumulator calls `step(1)` at 10 ticks per simulated second; backlog is retained. Speeds alter the number of fixed ticks, never production or movement math.
-- `render/`: 640×360 SubViewport; camera at about 39.5° pitch with 90° rotations and translation snapped in camera space. Nearest-neighbour integer scaling and letterboxing; UI is a separate full-resolution CanvasLayer. Three lighting bands and ordered dithering confined to shadow lighting; a one-native-pixel depth/normal outline pass; a 16³ RGB lookup table selecting from the 32 colours in `render/palettes/hearth32.json`. No textures or external art packages required.
+- `render/`: full-resolution SubViewport with antialiasing by default, optional 640 by 360 pixel rendering with nearest-neighbor scaling (scheduled for removal), and a separate full-resolution HUD. Village meshes use smooth weather-aware lighting alongside SpacesOS foliage. The old palette, outline, and dithered toon shader files remain for reference but are disconnected.
 - `tests/`: direct `SceneTree` runners; they never instantiate the view in the simulation suite.
 
-Public sim API: `place(id, Vector2i)`, `place_road(Array[Vector2i])`, `demolish(Vector2i)`, `step(ticks)`, `snapshot()`. Commands return `bool`; rejection reasons are in `last_error`. Snapshots copy all authoritative mutable state, including RNG, local slots, carrier reservations/cargo/routes, needs timers and map data. They support comparison/replay checks, not save-game loading in this milestone.
+Public sim API: `place(id, cell, rotation_quarters=0)`, `placement_error(id, cell, rotation_quarters=0)`, `place_road(Array[Vector2i])`, `demolish(Vector2i)`, `set_workers_enabled(uid, bool)`, `set_tax_percent(int)`, `step(ticks)`, `snapshot()`. Building orientation uses quarter turns, normalized to 0–3; the anchor stays at the minimum grid corner of the rotated footprint. Commands return `bool`; rejection reasons are in `last_error`. Snapshots copy all authoritative mutable state, including building orientation, RNG, local slots, carrier reservations/cargo/routes, needs timers and map data. They support comparison/replay checks; `sim/campaign.gd` separately stores and restores versioned campaign saves.
 
-Production inputs are consumed when a cycle starts; outputs appear when it completes. Input and output slots each hold six total items. Every carrier takes one item, moves one road tile every two ticks, and reserves both source stock and destination space. Direct input deliveries get priority; remaining outputs go to the owning storehouse. Stable iteration and rotating job priority avoid random scheduling. A* uses Manhattan distance and fixed tie ordering; routes are cached only until the road/placement revision changes.
+Production inputs are consumed when a cycle starts; outputs appear when it completes. Input and output slots each hold six total items. Every carrier takes one item, moves one road tile every two ticks, and reserves both source stock and destination space. House pantries are stocked first, then workshop inputs; each delivery comes from the closest supply by road (a storehouse's stock or a producer's output). Remaining outputs, and pantry goods a house's tier no longer eats, go to the owning storehouse. Stable iteration and rotating job priority avoid random scheduling. A* uses Manhattan distance and fixed tie ordering; routes are cached only until the road/placement revision changes.
 
-Four founding adults plus each house's data-defined workforce staff buildings in placement order. Storehouse carriers are separate transport workers. Construction spends logs from the founding reserve and storehouse inventories as a village-wide pool. Production and household consumption still require a road connection. Storehouses hold 180 items each; an empty new storehouse adds capacity and six carriers but grants no free goods.
+Four founding adults plus each house's data-defined workforce staff buildings in placement order, skipping buildings whose workers are stopped. Storehouse carriers are separate transport workers. Each house eats from its own six-slot pantry, one need at a time, and its happiness is the share of its tier's needs met this cycle. Money is whole silver (100 silver = 1 gold): every link in a chain pays the one before it, so a good costs its inputs plus its maker's labour (bread 16 s, flour 9 s, wheat 4 s). Producers pass that labour to a payroll that households share every 20 seconds; tax on wages is the treasury's only income, and the treasury pays for construction materials, new buildings' working money and public workers. A house that cannot pay goes without. See [docs/VILLAGERS.md](docs/VILLAGERS.md). Construction spends logs from the founding reserve and storehouse inventories as a village-wide pool. Production and household food both arrive by road. Storehouses hold 180 items each; an empty new storehouse adds capacity and six carriers but grants no free goods.
 
 ## Milestone scope and design adaptations
 
@@ -92,8 +122,8 @@ Four founding adults plus each house's data-defined workforce staff buildings in
 
 A house consumes a complete basket atomically from the **nearest reachable storehouse by road distance**. Fulfilment lasts until its next consumption deadline; a lost road immediately breaks fulfilment. Unlocks remain available after first achieving their tier, even if a house later downgrades.
 
-The milestone excludes fish, meat and firewood production chains, chapels, smithies and markets. **Logs substitute for firewood**, the chapel service is explicitly deferred, and starting berries supply the initial Settler need. Water remains a need at Tier 2. Berry gathering is not implemented; stable Villagers no longer need berries. Wells and woodcutters are renewable prototype sources; terrain/deposits are generated and exposed but depletion/adjacency bonuses await later balancing.
+The milestone excludes fish, meat and firewood production chains, chapels, smithies and markets. **Logs substitute for firewood**, the chapel service is explicitly deferred, and starting berries supply the initial Settler need. Water remains a need at Tier 2. Berry gathering is not implemented; stable Villagers no longer need berries. Wells remain a renewable prototype source. Woodcutters harvest actual nearby trees; foresters replenish woodland with saplings that mature in 60 simulated seconds. See [forestry and the wooded map](docs/FORESTRY.md). Adjacency bonuses await later balancing.
 
-There is no nation layer, factions, military, ages, seasons, raids, Tier 3, chartering, save/load, or advanced traffic simulation. The target here is the first working village chain and the pixel-rendering proof.
+There is no nation layer, factions, military, ages, seasons, raids, Tier 3, chartering, or advanced traffic simulation. The target here is the first working village chain and the imported environment rendering.
 
-Shader implementation references: Godot's [reverse-Z post-processing guide](https://docs.godotengine.org/en/4.3/tutorials/shaders/advanced_postprocessing.html) and [screen/depth/normal texture documentation](https://docs.godotengine.org/en/4.3/tutorials/shaders/screen-reading_shaders.html).
+Shader implementation references: Godot's [reverse-Z post-processing guide](https://docs.godotengine.org/en/stable/tutorials/shaders/advanced_postprocessing.html) and [screen/depth/normal texture documentation](https://docs.godotengine.org/en/stable/tutorials/shaders/screen-reading_shaders.html).

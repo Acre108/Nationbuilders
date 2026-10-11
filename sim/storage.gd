@@ -5,6 +5,16 @@ var items: Dictionary = {}
 func _init(size: int = 6) -> void:
 	capacity = size
 
+## Storage quantities are validated before a restored run can consume them.
+static func from_snapshot(state: Dictionary, size: int = 6):
+	var result = load("res://sim/storage.gd").new(size)
+	for good in state:
+		var amount = state[good]
+		if not good is String or not (amount is int or amount is float) or amount < 0 or amount != int(amount):
+			return null
+		result.items[good] = int(amount)
+	return result if result.total() <= size else null
+
 func count(good: String) -> int:
 	return int(items.get(good, 0))
 

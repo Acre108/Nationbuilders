@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "about": "Shared crop table for tools/geo/import_site.py and CropCatalogue. Calendars are stylised Central European (northern hemisphere) growth stages, not an agronomic model. Regions shift them; southern-hemisphere locations add half a year at runtime.",
+  "palette": {
+    "soil": [0.35, 0.30, 0.25],
+    "stubble": [0.62, 0.55, 0.38],
+    "maize_stubble": [0.47, 0.41, 0.31],
+    "sprout": [0.36, 0.50, 0.20],
+    "young": [0.33, 0.47, 0.19],
+    "lush": [0.29, 0.43, 0.16],
+    "heading": [0.36, 0.48, 0.22],
+    "turning": [0.54, 0.53, 0.25],
+    "ripe": [0.61, 0.49, 0.26],
+    "rosette": [0.24, 0.38, 0.16],
+    "rape_flower": [0.90, 0.78, 0.12],
+    "rape_pods": [0.37, 0.47, 0.21],
+    "rape_ripe": [0.45, 0.39, 0.24],
+    "maize_dry": [0.55, 0.47, 0.28],
+    "beet": [0.21, 0.37, 0.14],
+    "potato_yellow": [0.49, 0.48, 0.24],
+    "potato_dead": [0.38, 0.32, 0.22],
+    "sunflower_bloom": [0.84, 0.68, 0.10],
+    "sunflower_dry": [0.30, 0.24, 0.15],
+    "ley": [0.30, 0.42, 0.18],
+    "ley_summer": [0.40, 0.44, 0.21]
+  },
+  "keyframe_fields": ["day", "height", "plant", "field", "cover", "recolour"],
+  "crops": [
+    {
+      "id": 1, "name": "winter_wheat", "label": "Winter wheat",
+      "osm": ["wheat", "winter_wheat", "spring_wheat", "cereal", "grain", "spelt", "durum_wheat"],
+      "plant": "wheat", "height_m": 1.0, "row_spacing": 0.9, "plant_spacing": 0.9,
+      "rows": {"spacing": 0.9, "width": 0.3, "strength": 0.25, "tramlines": true},
+      "calendar": [
+        [1, 0.12, "young", "young", 0.55, 1.0],
+        [70, 0.12, "young", "young", 0.6, 1.0],
+        [120, 0.55, "lush", "lush", 0.95, 1.0],
+        [160, 1.0, "heading", "heading", 1.0, 1.0],
+        [180, 1.0, "turning", "turning", 1.0, 0.55],
+        [195, 1.0, "ripe", "ripe", 1.0, 0.0],
+        [218, 1.0, "ripe", "ripe", 1.0, 0.0],
+        [219, 0.0, "stubble", "stubble", 0.75, 0.0],
+        [255, 0.0, "stubble", "stubble", 0.75, 0.0],
+        [265, 0.0, "soil", "soil", 0.0, 0.0],
+        [285, 0.0, "soil", "soil", 0.0, 0.0],
+        [300, 0.05, "sprout", "sprout", 0.25, 1.0],
+        [335, 0.1, "young", "young", 0.5, 1.0]
+      ]
+    },
+    {
+      "id": 2, "name": "barley", "label": "Barley",
+      "osm": ["barley", "winter_barley", "spring_barley", "oats", "oat"],
+      "plant": "wheat", "height_m": 0.85, "row_spacing": 0.9, "plant_spacing": 0.9,
+      "rows": {"spacing": 0.9, "width": 0.3, "strength": 0.25, "tramlines": true},
+      "calendar": [
+        [1, 0.12, "young", "young", 0.55, 1.0],
+        [70, 0.12, "young", "young", 0.6, 1.0],
+        [115, 0.6, "lush", "lush", 0.95, 1.0],
+        [150, 1.0, "heading", "heading", 1.0, 1.0],
+        [168, 1.0, "turning", "turning", 1.0, 0.55],
+        [180, 1.0, "ripe", "ripe", 1.0, 0.0],
+        [203, 1.0, "ripe", "ripe", 1.0, 0.0],
+        [204, 0.0, "stubble", "stubble", 0.75, 0.0],
+        [240, 0.0, "stubble", "stubble", 0.75, 0.0],
+        [250, 0.0, "soil", "soil", 0.0, 0.0],
+        [262, 0.0, "soil", "soil", 0.0, 0.0],
+        [278, 0.05, "sprout", "sprout", 0.25, 1.0],
+        [320, 0.1, "young", "young", 0.5, 1.0]
+      ]
+    },
+    {
+      "id": 3, "name": "rye", "label": "Rye",
+      "osm": ["rye", "winter_rye", "triticale"],
+      "plant": "wheat", "height_m": 1.4, "row_spacing": 0.9, "plant_spacing": 0.9,
+      "rows": {"spacing": 0.9, "width": 0.3, "strength": 0.25, "tramlines": true},
+      "calendar": [
+        [1, 0.1, "young", "young", 0.55, 1.0],
+        [70, 0.1, "young", "young", 0.6, 1.0],
+        [125, 0.6, "lush", "lush", 0.95, 1.0],
+        [160, 1.0, "heading", "heading", 1.0, 1.0],
+        [182, 1.0, "turning", "turning", 1.0, 0.55],
+        [198, 1.0, "ripe", "ripe", 1.0, 0.0],
+        [212, 1.0, "ripe", "ripe", 1.0, 0.0],
+        [213, 0.0, "stubble", "stubble", 0.75, 0.0],
+        [250, 0.0, "stubble", "stubble", 0.75, 0.0],
+        [260, 0.0, "soil", "soil", 0.0, 0.0],
+        [275, 0.0, "soil", "soil", 0.0, 0.0],
+        [290, 0.05, "sprout", "sprout", 0.25, 1.0],
+        [330, 0.1, "young", "young", 0.5, 1.0]
+      ]
+    },
+    {
+      "id": 4, "name": "winter_rapeseed", "label": "Winter oilseed rape",
+      "osm": ["rape", "rapeseed", "oilseed_rape", "winter_rape", "canola"],
+      "plant": "bush_1", "height_m": 1.4, "row_spacing": 1.0, "plant_spacing": 1.0,
+      "rows": {"spacing": 1.0, "width": 0.45, "strength": 0.15, "tramlines": true},
+      "calendar": [
+        [1, 0.15, "rosette", "rosette", 0.7, 1.0],
+        [75, 0.2, "rosette", "rosette", 0.75, 1.0],
+        [100, 0.7, "lush", "lush", 0.95, 1.0],
+        [112, 1.0, "rape_flower", "rape_flower", 1.0, 0.95],
+        [138, 1.0, "rape_flower", "rape_flower", 1.0, 0.95],
+        [150, 1.0, "rape_pods", "rape_pods", 1.0, 0.9],
+        [180, 1.0, "rape_ripe", "rape_ripe", 1.0, 0.9],
+        [198, 1.0, "rape_ripe", "rape_ripe", 1.0, 0.9],
+        [199, 0.0, "stubble", "stubble", 0.6, 0.0],
+        [222, 0.0, "soil", "soil", 0.0, 0.0],
+        [232, 0.0, "soil", "soil", 0.0, 0.0],
+        [245, 0.05, "sprout", "sprout", 0.3, 1.0],
+        [280, 0.15, "rosette", "rosette", 0.7, 1.0]
+      ]
+    },
+    {
+      "id": 5, "name": "maize", "label": "Maize",
+      "osm": ["maize", "corn", "silage_maize", "grain_maize", "sweet_corn"],
+      "plant": "maize", "height_m": 2.0, "row_spacing": 0.78, "plant_spacing": 0.62,
+      "rows": {"spacing": 0.78, "width": 0.35, "strength": 0.5, "tramlines": true},
+      "calendar": [
+        [1, 0.0, "maize_stubble", "maize_stubble", 0.5, 0.0],
+        [80, 0.0, "soil", "soil", 0.0, 0.0],
+        [125, 0.0, "soil", "soil", 0.0, 0.0],
+        [140, 0.08, "sprout", "sprout", 0.15, 1.0],
+        [165, 0.4, "lush", "lush", 0.5, 0.0],
+        [192, 1.0, "lush", "lush", 0.95, 0.0],
+        [240, 1.0, "lush", "lush", 0.95, 0.0],
+        [262, 1.0, "maize_dry", "maize_dry", 0.95, 0.7],
+        [280, 1.0, "maize_dry", "maize_dry", 0.95, 0.75],
+        [281, 0.0, "maize_stubble", "maize_stubble", 0.55, 0.0],
+        [320, 0.0, "maize_stubble", "maize_stubble", 0.5, 0.0]
+      ]
+    },
+    {
+      "id": 6, "name": "sugar_beet", "label": "Sugar beet",
+      "osm": ["sugar_beet", "beet", "beetroot", "fodder_beet"],
+      "plant": "bush_2", "height_m": 0.45, "row_spacing": 0.9, "plant_spacing": 0.8,
+      "rows": {"spacing": 0.9, "width": 0.45, "strength": 0.6, "tramlines": false},
+      "calendar": [
+        [1, 0.0, "soil", "soil", 0.0, 0.0],
+        [100, 0.0, "soil", "soil", 0.0, 0.0],
+        [118, 0.08, "sprout", "sprout", 0.1, 1.0],
+        [145, 0.45, "beet", "beet", 0.5, 1.0],
+        [175, 1.0, "beet", "beet", 0.95, 1.0],
+        [290, 1.0, "beet", "beet", 0.9, 1.0],
+        [291, 0.0, "soil", "soil", 0.0, 0.0]
+      ]
+    },
+    {
+      "id": 7, "name": "potato", "label": "Potato",
+      "osm": ["potato", "potatoes"],
+      "plant": "bush_3", "height_m": 0.55, "row_spacing": 0.9, "plant_spacing": 0.8,
+      "rows": {"spacing": 0.9, "width": 0.5, "strength": 0.6, "tramlines": false},
+      "calendar": [
+        [1, 0.0, "soil", "soil", 0.0, 0.0],
+        [105, 0.0, "soil", "soil", 0.0, 0.0],
+        [130, 0.12, "sprout", "sprout", 0.15, 1.0],
+        [165, 1.0, "lush", "lush", 0.9, 1.0],
+        [210, 1.0, "potato_yellow", "potato_yellow", 0.85, 0.9],
+        [232, 0.6, "potato_dead", "potato_dead", 0.6, 0.9],
+        [245, 0.0, "soil", "soil", 0.0, 0.0]
+      ]
+    },
+    {
+      "id": 8, "name": "sunflower", "label": "Sunflower",
+      "osm": ["sunflower", "sunflowers"],
+      "plant": "sunflower", "height_m": 1.8, "row_spacing": 0.75, "plant_spacing": 0.5,
+      "rows": {"spacing": 0.75, "width": 0.35, "strength": 0.5, "tramlines": false},
+      "calendar": [
+        [1, 0.0, "soil", "soil", 0.0, 0.0],
+        [110, 0.0, "soil", "soil", 0.0, 0.0],
+        [130, 0.1, "sprout", "sprout", 0.15, 1.0],
+        [170, 0.8, "lush", "lush", 0.8, 0.0],
+        [190, 1.0, "sunflower_bloom", "sunflower_bloom", 0.95, 0.0],
+        [215, 1.0, "sunflower_bloom", "sunflower_bloom", 0.95, 0.0],
+        [232, 1.0, "heading", "heading", 0.9, 0.5],
+        [255, 1.0, "sunflower_dry", "sunflower_dry", 0.85, 0.85],
+        [268, 0.0, "maize_stubble", "maize_stubble", 0.5, 0.0],
+        [300, 0.0, "soil", "soil", 0.0, 0.0]
+      ]
+    },
+    {
+      "id": 9, "name": "ley", "label": "Grass ley / fodder",
+      "osm": ["grass", "clover", "alfalfa", "lucerne", "fodder", "ley", "hay", "meadow", "fallow"],
+      "plant": "", "height_m": 0.0, "row_spacing": 1.0, "plant_spacing": 1.0,
+      "rows": {"spacing": 1.0, "width": 0.5, "strength": 0.0, "tramlines": false},
+      "calendar": [
+        [1, 0.0, "ley", "ley", 1.0, 0.0],
+        [170, 0.0, "ley", "ley", 1.0, 0.0],
+        [215, 0.0, "ley_summer", "ley_summer", 1.0, 0.0],
+        [300, 0.0, "ley", "ley", 1.0, 0.0]
+      ]
+    }
+  ],
+  "regions": {
+    "temperate": {
+      "about": "Humid temperate/continental Europe (Koppen Cfb, Cfa, Dfb, Dfa).",
+      "calendar_shift": 0,
+      "unmapped": "winter_wheat",
+      "rotation": [["winter_wheat", 0.3], ["maize", 0.18], ["winter_rapeseed", 0.14], ["barley", 0.12], ["rye", 0.08], ["ley", 0.08], ["sugar_beet", 0.06], ["potato", 0.04]]
+    },
+    "mediterranean": {
+      "about": "Dry-summer Mediterranean (Koppen Cs*): earlier harvest, sunflower.",
+      "calendar_shift": -25,
+      "unmapped": "winter_wheat",
+      "rotation": [["winter_wheat", 0.4], ["barley", 0.2], ["sunflower", 0.15], ["ley", 0.15], ["maize", 0.1]]
+    },
+    "boreal": {
+      "about": "Subarctic/boreal (Koppen Dfc, Dfd, Dwc): late season, barley and ley.",
+      "calendar_shift": 15,
+      "unmapped": "ley",
+      "rotation": [["barley", 0.35], ["ley", 0.35], ["winter_wheat", 0.15], ["rye", 0.1], ["potato", 0.05]]
+    },
+    "steppe": {
+      "about": "Semi-arid and continental steppe (Koppen BSk, BSh, Dsa, Dsb, Dwa, Dwb).",
+      "calendar_shift": -10,
+      "unmapped": "winter_wheat",
+      "rotation": [["winter_wheat", 0.5], ["barley", 0.2], ["sunflower", 0.15], ["ley", 0.15]]
+    },
+    "unsupported": {
+      "about": "Tropical, desert, polar and highland climates: no crop calendar yet (paddy, sugar cane, etc. are not modelled). Fields read as grass ley; the importer warns.",
+      "calendar_shift": 0,
+      "unmapped": "ley",
+      "rotation": [["ley", 1.0]]
+    }
+  },
+  "climate_regions": {
+    "Cfb": "temperate", "Cfa": "temperate", "Cfc": "temperate", "Dfb": "temperate", "Dfa": "temperate",
+    "Csa": "mediterranean", "Csb": "mediterranean", "Csc": "mediterranean",
+    "Dfc": "boreal", "Dfd": "boreal", "Dwc": "boreal", "Dwd": "boreal", "Dsc": "boreal",
+    "BSk": "steppe", "BSh": "steppe", "Dsa": "steppe", "Dsb": "steppe", "Dwa": "steppe", "Dwb": "steppe"
+  }
+}

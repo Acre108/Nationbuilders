@@ -1,32 +1,115 @@
 extends RefCounted
-const SIZE := 40
+## Authoritative tiles for one site. Size, terrain, levels and reach come from
+## its SitePackage; roads and buildings are added by commands.
 const DIRECTIONS := [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]
+const WATER := ["water", "stream", "river", "lake", "ocean"]
+var width := 0
+var height := 0
 var terrain: Array[String] = []
 var deposits: Array[String] = []
+var levels := PackedInt32Array()
+var ramps := PackedByteArray()
+var reach := PackedByteArray()
+var footprint := PackedByteArray()
+var owner_coords: Array[Vector2i] = []
+var districts: Dictionary = {}
+var hex_width := 0.0
+var world_origin := Vector2.ZERO
 var occupied: Dictionary = {}
 var roads: Dictionary = {}
 var revision := 0
+## Trees and saplings are actual resources, separate from road path revisions.
+var trees: Dictionary = {}
+var saplings: Dictionary = {} # cell -> maturity tick
+var stumps: Dictionary = {}
+var forest_revision := 0
+var settlement_clearance := Rect2i()
 var _path_cache: Dictionary = {}
 
-func _init(rng) -> void:
-	for y in SIZE:
-		for x in SIZE:
-			var roll: int = rng.next_int(100)
-			var tile := "grass"
-			if x >= 32 + (y / 9) % 2:
-				tile = "water"
-			elif (x < 9 or y < 12 or y > 27) and roll < 55:
-				tile = "forest"
-			elif (x < 7 or y < 9 or y > 30) and roll > 90:
-				tile = "rock"
-			terrain.append(tile)
-			deposits.append("timber" if tile == "forest" else ("fertile_soil" if tile == "grass" and x > 10 and x < 20 and y > 13 and y < 24 else ""))
+func _init(site) -> void:
+	width = site.width
+	height = site.height
+	terrain = site.terrain.duplicate()
+	deposits = site.deposits.duplicate()
+	levels = site.levels.duplicate()
+	ramps = site.ramps.duplicate()
+	reach = site.reach.duplicate()
+	footprint = site.footprint.duplicate()
+	owner_coords = site.owner_coords.duplicate()
+	districts = site.districts.duplicate(true)
+	hex_width = site.hex_width
+	world_origin = site.world_origin
+	settlement_clearance = site.settlement_clearance
+	for y in height:
+		for x in width:
+			if terrain_at(Vector2i(x,y)) == "forest":
+				trees[Vector2i(x,y)] = true
+
+func clear_tree(cell: Vector2i, leave_stump: bool = false) -> void:
+	if not inside(cell): return
+	var had_tree := trees.erase(cell)
+	var had_sapling := saplings.erase(cell)
+	var had_stump := stumps.erase(cell)
+	if had_tree and leave_stump:
+		stumps[cell] = true
+	if terrain_at(cell) == "forest":
+		terrain[cell.y*width+cell.x] = "grass"
+		deposits[cell.y*width+cell.x] = ""
+	if had_tree or had_sapling or had_stump:
+		forest_revision += 1
+
+func can_plant(cell: Vector2i) -> bool:
+	# Keep the established spacing between crowns as woodland is replenished.
+	return in_reach(cell) and terrain_at(cell) == "grass" and (posmod(cell.x+cell.y,3) == 0 or stumps.has(cell)) and not is_ramp(cell) and not settlement_clearance.has_point(cell) and not occupied.has(cell) and not roads.has(cell) and not trees.has(cell) and not saplings.has(cell)
+
+func plant_tree(cell: Vector2i, maturity_tick: int) -> void:
+	if not can_plant(cell): return
+	saplings[cell] = maturity_tick
+	stumps.erase(cell)
+	forest_revision += 1
+
+func grow_trees(tick: int) -> void:
+	for cell in saplings.keys():
+		if tick < int(saplings[cell]): continue
+		saplings.erase(cell)
+		if not inside(cell) or occupied.has(cell) or roads.has(cell): continue
+		trees[cell] = true
+		terrain[cell.y*width+cell.x] = "forest"
+		deposits[cell.y*width+cell.x] = "timber"
+		forest_revision += 1
 
 func inside(cell: Vector2i) -> bool:
-	return cell.x >= 0 and cell.y >= 0 and cell.x < SIZE and cell.y < SIZE
+	return cell.x >= 0 and cell.y >= 0 and cell.x < width and cell.y < height and footprint[cell.y * width + cell.x] == 1
+
+func world_point(cell: Vector2i) -> Vector2:
+	return world_origin + (Vector2(cell) + Vector2(0.5,0.5)) * (2.0 / hex_width) if hex_width > 0.0 else Vector2(cell)
 
 func terrain_at(cell: Vector2i) -> String:
-	return terrain[cell.y * SIZE + cell.x] if inside(cell) else "void"
+	return terrain[cell.y * width + cell.x] if inside(cell) else "void"
+
+func level_at(cell: Vector2i) -> int:
+	return levels[cell.y * width + cell.x] if inside(cell) else 0
+
+func is_ramp(cell: Vector2i) -> bool:
+	return inside(cell) and ramps[cell.y * width + cell.x] == 1
+
+func in_reach(cell: Vector2i) -> bool:
+	return inside(cell) and reach[cell.y * width + cell.x] == 1
+
+func is_water(cell: Vector2i) -> bool:
+	return terrain_at(cell) in WATER
+
+## Whether a carrier can step between two 4-neighbours: same level, or one
+## level apart where the upper tile is a ramp. Any other level change is a cliff.
+func passable(a: Vector2i, b: Vector2i) -> bool:
+	if not inside(a) or not inside(b):
+		return false
+	var difference := level_at(a) - level_at(b)
+	if difference == 0:
+		return true
+	if absi(difference) != 1:
+		return false
+	return is_ramp(a if difference > 0 else b)
 
 func changed() -> void:
 	revision += 1
@@ -37,7 +120,7 @@ func access(building) -> Array[Vector2i]:
 	for tile in building.cells():
 		for direction in DIRECTIONS:
 			var neighbor: Vector2i = tile + direction
-			if roads.has(neighbor) and neighbor not in result:
+			if roads.has(neighbor) and passable(tile, neighbor) and neighbor not in result:
 				result.append(neighbor)
 	return result
 
@@ -59,7 +142,7 @@ func route_to(start: Vector2i, goals: Array[Vector2i]) -> Array[Vector2i]:
 
 func astar(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
 	var empty: Array[Vector2i] = []
-	if not roads.has(start) or not roads.has(goal):
+	if not inside(start) or not inside(goal) or not in_reach(start) or not in_reach(goal) or not roads.has(start) or not roads.has(goal):
 		return empty
 	var key := "%s>%s" % [start, goal]
 	if _path_cache.has(key):
@@ -84,7 +167,7 @@ func astar(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
 		for direction in DIRECTIONS:
 			var neighbor: Vector2i = current + direction
 			var candidate := int(distance[current]) + 1
-			if roads.has(neighbor) and (not distance.has(neighbor) or candidate < int(distance[neighbor])):
+			if roads.has(neighbor) and passable(current, neighbor) and (not distance.has(neighbor) or candidate < int(distance[neighbor])):
 				distance[neighbor] = candidate
 				previous[neighbor] = current
 				if neighbor not in frontier:

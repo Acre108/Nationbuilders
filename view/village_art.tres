@@ -1,0 +1,31 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://view/village_art_profile.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+sun_warmth = 0.72
+sun_intensity = 1.75
+shadow_tint = Color(0.388235, 0.498039, 0.568627, 1)
+ambient_fill = 0.58
+exposure = 1.0
+surface_detail = 0.65
+canopy_highlights = 0.75
+canopy_fullness = 0.65
+canopy_readability = 0.65
+ao_strength = 0.75
+sun_azimuth = -50.0
+palette_grade = 0.32
+terrain_variation = 0.65
+forest_darkness = 0.80
+meadow_detail_cover = 0.16
+grass_patch_density = 2
+flower_patch_density = 0.28
+cloud_shadow_opacity = 0.22
+cloud_tile_size = 72.0
+cloud_speed = 0.0015
+wind_direction = Vector2(1.0, 0.35)
+wind_strength = 0.16
+wind_speed = 0.028
+particle_density = 0.18
+water_glints = 0.65
