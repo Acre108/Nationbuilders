@@ -15,6 +15,7 @@ func run(t) -> void:
 	_workforce_switch(t)
 	_pantry_and_happiness(t)
 	_money(t)
+	_treasury(t)
 
 func _chain(t) -> void:
 	var sim = Sim.new(73)
@@ -285,7 +286,19 @@ func _money(t) -> void:
 	chain.economy.payday(chain)
 	t.check(houses[0].last_wage + houses[1].last_wage == 101 and absi(houses[0].last_wage - houses[1].last_wage) <= 1, "Equal houses get equal shares of the payroll")
 	_money_conserved(t,chain,"payroll shares")
-	t.check(chain.set_tax_percent(0) and not chain.set_tax_percent(101), "Tax rate is set between 0 and 100 percent")
+	t.check(chain.set_tax_percent(0) and not chain.set_tax_percent(101), "Tax rate rejects values above the limit")
+	# Only households pay the storehouse markup; a workshop buys at chain price.
+	var chain_store = _find(chain,"storehouse")
+	var float_silver: int = chain.price("wheat") - mill.silver
+	if float_silver > 0: # The mill may be spent out after a long run; float it one purchase.
+		mill.silver += float_silver
+		chain.treasury -= float_silver
+	var mill_silver: int = mill.silver
+	var store_silver: int = chain_store.silver
+	chain.economy.settle(chain,mill,chain_store.uid,"wheat")
+	t.check(mill.silver == mill_silver - chain.price("wheat") and chain_store.silver == store_silver + chain.price("wheat"), "A workshop buys from a storehouse at the chain price")
+	t.check(chain.sale_price(mill,chain_store,"wheat") == chain.price("wheat") and chain.sale_price(house_two,chain_store,"bread") > chain.price("bread") and chain.sale_price(house_two,bakery,"bread") == chain.price("bread"), "Only a household buying from a storehouse pays the markup")
+	_money_conserved(t,chain,"workshop purchase")
 	# A household with no wages spends its purse, then goes without.
 	var poor = _fixture()
 	poor.place_road(road)
@@ -294,11 +307,111 @@ func _money(t) -> void:
 	var idle = _find(poor,"house")
 	var shop = _find(poor,"storehouse")
 	poor.step(4000)
-	t.check(idle.silver < poor.price("berries") and idle.status.begins_with("cannot afford") and idle.happiness < 100, "A house without wages cannot afford its needs")
+	t.check(idle.silver < poor.economy.retail_price(poor,"berries") and idle.status.begins_with("cannot afford") and idle.happiness < 100, "A house without wages cannot afford its needs")
 	t.check(shop.silver > Economy.STOREHOUSE_CAPITAL, "The storehouse is paid for the food it sold")
 	_money_conserved(t,poor,"poverty")
 	poor.demolish(Vector2i(20,21))
 	_money_conserved(t,poor,"demolished household")
+	t.check(poor.period.refunds > 0, "A demolished building's silver is recorded as a treasury refund")
+
+## VILLAGERS.md section 5: tax control, reserves, public-worker frustration,
+## storehouse markup and the purse cap.
+func _treasury(t) -> void:
+	var sim = _fixture()
+	var road: Array[Vector2i] = []
+	for x in range(12,27):
+		road.append(Vector2i(x,20))
+	sim.place_road(road)
+	sim.place("storehouse",Vector2i(12,21))
+	var store = _find(sim,"storehouse")
+	t.check(sim.tax_percent == Economy.DEFAULT_TAX_PERCENT and sim.set_tax_percent(Economy.MAX_TAX_PERCENT) and sim.tax_percent == Economy.MAX_TAX_PERCENT, "Tax can be raised to the limit")
+	t.check(not sim.set_tax_percent(Economy.MAX_TAX_PERCENT + Economy.TAX_STEP) and not sim.set_tax_percent(-1) and sim.tax_percent == Economy.MAX_TAX_PERCENT, "Tax outside 0 to the limit is rejected")
+	sim.set_tax_percent(Economy.DEFAULT_TAX_PERCENT)
+	# Reserves are parts of the treasury, moved by hand.
+	var total: int = sim.treasury
+	t.check(sim.transfer_reserve("public",300) and sim.public_reserve == 300 and sim.treasury == total and Economy.free_gold(sim) == total - 300, "Gold moves from free into the public pay reserve")
+	t.check(sim.transfer_reserve("capital",100000) and sim.capital_reserve == total - 300 and Economy.free_gold(sim) == 0, "A transfer moves at most the free gold")
+	t.check(not sim.transfer_reserve("capital",100) and not sim.transfer_reserve("savings",-100), "Nothing moves without free gold, or to an unknown reserve")
+	_money_conserved(t,sim,"reserve transfers")
+	# Construction draws on the capital reserve and never the public pay reserve.
+	var built: int = sim.period.construction
+	t.check(sim.place("house",Vector2i(20,21)), "Construction can spend the capital reserve")
+	var house = _find(sim,"house")
+	var house_cost: int = sim.period.construction - built
+	t.check(house_cost > 0 and sim.capital_reserve == total - 300 - house_cost and sim.public_reserve == 300, "Construction leaves the public pay reserve untouched")
+	t.check(sim.transfer_reserve("capital",-100000) and sim.capital_reserve == 0, "Gold moves back from a reserve")
+	sim.transfer_reserve("public",100000)
+	var well_error: String = sim.placement_error("well",Vector2i(18,21))
+	t.check(well_error.begins_with("Treasury needs") and "public pay reserve" in well_error, "Construction cannot spend the public pay reserve: " + well_error)
+	sim.transfer_reserve("public",-100000)
+	t.check(sim.place("forester",Vector2i(15,21)), "Place a forester, a public workplace")
+	var forester = _find(sim,"forester")
+	# Public pay never touches the capital reserve. Unpaid public workers keep
+	# working, but their frustration grows.
+	sim.step(1)
+	sim.transfer_reserve("capital",100000)
+	var capital: int = sim.capital_reserve
+	_to_payday(sim)
+	t.check(forester.staffed and forester.last_wage == 0 and sim.capital_reserve == capital, "Public pay cannot spend the capital reserve")
+	t.check(forester.frustration == 1 and sim.public_frustration == 1 and sim.ledger[-1].unpaid == Economy.WAGE, "Each unpaid public worker adds to the frustration counter")
+	t.check(forester.staffed and forester.status not in ["no workers","workers stopped"], "Unpaid public workers keep working")
+	# Public pay draws on its own reserve first.
+	sim.transfer_reserve("capital",-100000)
+	sim.transfer_reserve("public",25)
+	var free_before: int = Economy.free_gold(sim)
+	_to_payday(sim)
+	t.check(forester.last_wage == Economy.WAGE and sim.public_reserve == 25 - Economy.WAGE and forester.frustration == 1, "Public pay comes from its reserve first")
+	t.check(Economy.free_gold(sim) == free_before + sim.ledger[-1].tax + sim.ledger[-1].trade, "Free gold is untouched while the reserve pays")
+	_money_conserved(t,sim,"public pay")
+	# Storehouses sell to households at a markup; producers sell direct at chain price.
+	var water: int = sim.price("water")
+	t.check(sim.economy.retail_price(sim,"water") == water + 1, "The markup is at least 1 s on cheap goods")
+	var bread: int = sim.price("bread")
+	t.check(sim.economy.retail_price(sim,"bread") == bread + (bread * Economy.DEFAULT_MARKUP_PERCENT + 50) / 100, "The default markup is applied to the chain price")
+	var house_silver: int = house.silver
+	var store_silver: int = store.silver
+	sim.economy.settle(sim,house,store.uid,"berries")
+	var retail: int = sim.economy.retail_price(sim,"berries")
+	t.check(retail > sim.price("berries") and house.silver == house_silver - retail and store.silver == store_silver + retail, "A household pays the storehouse its markup")
+	t.check(sim.place("well",Vector2i(18,21)), "Place a well beside the house")
+	var well = _find(sim,"well")
+	house_silver = house.silver
+	sim.economy.settle(sim,house,well.uid,"water")
+	t.check(house.silver == house_silver - water, "A producer sells to a household at the chain price")
+	t.check(sim.set_markup_percent(0) and sim.economy.retail_price(sim,"bread") == bread and not sim.set_markup_percent(Economy.MAX_MARKUP_PERCENT + 1), "Markup is set from 0 to its limit")
+	sim.set_markup_percent(Economy.DEFAULT_MARKUP_PERCENT)
+	_money_conserved(t,sim,"markup sales")
+	# A storehouse keeps enough silver to restock what the village makes up to
+	# its per-good limit (and at least PURSE_CAP); the rest goes to the treasury
+	# at payday. Called directly, so no carrier trades in between.
+	var limit := int(store.definition.good_limit)
+	var restock: int = (limit - store.inventory.count("water")) * water
+	t.check(sim.economy.purse_cap(sim,store) == maxi(Economy.PURSE_CAP,restock), "The purse cap covers restocking the goods the village makes")
+	var cap: int = sim.economy.purse_cap(sim,store)
+	var top_up: int = cap + 37 - store.silver
+	store.silver += top_up
+	sim.treasury -= top_up
+	sim.economy.payday(sim)
+	t.check(store.silver == cap and sim.ledger[-1].trade == 37, "A storehouse's surplus above its purse cap goes to the treasury")
+	_money_conserved(t,sim,"trade surplus")
+	for index in Economy.LEDGER_PAYDAYS + 2:
+		_to_payday(sim)
+	t.check(sim.ledger.size() == Economy.LEDGER_PAYDAYS, "The ledger keeps the last few paydays")
+	# Reserves, markup, frustration and the ledger survive a snapshot.
+	sim.transfer_reserve("public",120)
+	sim.transfer_reserve("capital",80)
+	sim.set_markup_percent(40)
+	var restored = Sim.from_snapshot(sim.snapshot())
+	t.check(restored != null and JSON.stringify(restored.snapshot()) == JSON.stringify(sim.snapshot()), "Treasury state round-trips through a snapshot")
+	var tampered: Dictionary = sim.snapshot()
+	tampered.public_reserve = tampered.treasury
+	t.check(Sim.from_snapshot(tampered) == null, "Snapshots with reserves larger than the treasury are rejected")
+	tampered = sim.snapshot()
+	tampered.ledger.append({"tax":1})
+	t.check(Sim.from_snapshot(tampered) == null, "Snapshots with malformed ledger entries are rejected")
+
+func _to_payday(sim) -> void:
+	sim.step(sim.PAYDAY_TICKS - sim.tick % sim.PAYDAY_TICKS)
 
 func _find(sim, id: String):
 	for building in sim.buildings.values():
@@ -324,6 +437,7 @@ func _money_conserved(t, sim, label: String) -> void:
 	for building in sim.buildings.values():
 		money += building.silver
 	t.check(money == Economy.FOUNDING_TREASURY, "%s conserves money: %d == %d" % [label,money,Economy.FOUNDING_TREASURY])
+	t.check(sim.public_reserve >= 0 and sim.capital_reserve >= 0 and sim.public_reserve + sim.capital_reserve <= sim.treasury, "%s keeps reserves inside the treasury" % label)
 
 ## Small archived flat layout for isolated logistics/placement fixtures.
 func _fixture(seed_value: int = 73, content = null):

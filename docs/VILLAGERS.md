@@ -1,6 +1,6 @@
 # Villagers: workforce, food, happiness and money
 
-**Status:** sections 1–4 are implemented. Section 5 is the agreed next phase. Section 6 lists open design questions.
+**Status:** sections 1–5 are implemented. Section 5 (treasury controls and storehouse trade) landed on 14 October 2026; section 5.5 records its balance results. Section 6 lists open design questions.
 
 Villagers are still counted per house, as in [DESIGN.md](DESIGN.md). Individual citizens are not simulated. This document covers how houses supply workers, how they get fed, how satisfied they are, and how they earn and spend money.
 
@@ -47,7 +47,7 @@ The rules live in [sim/economy.gd](../sim/economy.gd).
 
 Money is held in whole **silver**, and 100 silver make 1 **gold**. Villagers and prices use silver. The treasury is the player's and is shown in gold. Silver keeps cheap goods whole: if prices were whole gold, every stage of a chain would at least double a good's price.
 
-Money is closed. The treasury, the payroll and every building's silver always sum to the founding treasury of 10 gold, and the tests check this.
+Money is closed. The treasury (reserves included), the payroll and every building's silver always sum to the founding treasury of 10 gold, and the tests check this.
 
 ### Prices come from the chain
 
@@ -55,7 +55,7 @@ Money is closed. The treasury, the payroll and every building's silver always su
 - The mill pays for its wheat.
 - The bakery pays for its flour and water.
 - A house pays for its bread.
-- A storehouse pays for what it collects, and is paid for what it hands out.
+- A storehouse pays for what it collects, and is paid for what it hands out. Households also pay it a markup (5.3).
 
 A good's price is its inputs plus the labour of the building that made it:
 
@@ -80,8 +80,8 @@ Prices are worked out from `buildings.json` when the sim starts. A good that no 
   - A workshop's purse therefore stays level, and a half-idle bakery never goes broke.
   - Wages follow what the village actually sells. Goods nobody buys earn no one anything.
 - **Payday** (every 20 s) shares the payroll between houses by the workers each provides. Spare silver rotates between houses.
-- **Tax** is withheld at payday into the treasury: 10% of wages by default (`set_tax_percent`). **Tax is the treasury's only income.**
-- **Public workers.** Buildings that sell nothing, such as the forester, are paid by the treasury at each payday: 10 s per worker.
+- **Tax** is withheld at payday into the treasury: 10% of wages by default, set in the Treasury panel (5.1). Tax and storehouse surpluses (5.3) are the treasury's income.
+- **Public workers.** Buildings that sell nothing, such as the forester, are paid by the treasury at each payday: 10 s per worker, from the public pay reserve first (5.2). Unpaid public workers keep working, and their frustration grows.
 
 ### Spending
 
@@ -95,14 +95,14 @@ Prices are worked out from `buildings.json` when the sim starts. A good that no 
     - a house: 50 s;
     - a storehouse: 100 s, for trading;
     - a workshop: enough to fill its inputs once (24 s for a mill, 33 s for a bakery).
-  - **Affordability.** Placement fails with "Treasury needs …" when the treasury can't cover it. The build card shows what the treasury pays.
+  - **Affordability.** Placement fails with "Treasury needs …" when the gold construction may use (everything but the public pay reserve, 5.2) can't cover it. The build card shows what the treasury pays.
 - **Demolition** returns a building's silver to the treasury.
 
 A house costs the treasury 92 s: 42 s of logs and a 50 s purse. A windmill costs 80 s.
 
 ### How it behaves
 
-In a 30-minute run of the default village with its mill and bakery:
+Before section 5, in a 30-minute run of the default village with its mill and bakery (see 5.5 for current results):
 - The treasury starts at 10 g and falls to about 5.7 g after the starter village and chain are built.
 - Taxes then add about 10 s every 3 minutes with one house.
 - Construction spending flows from storehouses to producers and on to households as wages. Building is what creates jobs.
@@ -113,79 +113,110 @@ The inspector shows the money at each building:
 
 | Building | Shown |
 | --- | --- |
-| House | Savings, last payday's wage and tax, and each need's price |
+| House | Savings, last payday's wage and tax, and each need's price direct and from a storehouse |
 | Workshop | What it sells, for how much, how much of that is wages, and its purse |
-| Forester | That the treasury pays it |
-| Storehouse | Its trading purse, the treasury in gold, and the tax rate |
+| Forester | That the treasury pays it, what it was paid last payday, and its frustration |
+| Storehouse | Its trading purse and purse cap, its markup, the treasury in gold, and the tax rate |
 
-## 5. Next phase: treasury controls and storehouse trade
+## 5. Treasury controls and storehouse trade
 
-**Status:** agreed on 11 October 2026; work starts 12 October. Each item gives the decision, the proposed design, and the choices still open. The recommended option is listed first.
+**Status:** agreed on 11 October 2026 and implemented on 14 October 2026. The player chose:
+- manual reserve transfers first, with automatic allocation later;
+- unpaid public workers keep working, but a frustration counter goes up;
+- only households pay the storehouse markup;
+- the margin stays in the storehouse up to a purse cap, and the rest goes to the treasury.
 
-### 5.1 Tax control
+The rules live in [sim/economy.gd](../sim/economy.gd). The panel is in [view/overlays/village_hud.gd](../view/overlays/village_hud.gd).
 
-**Decision.** The player sets the tax rate in the HUD.
+### 5.1 Gold counter and Treasury panel
 
-**Proposed design**
-- A **Treasury panel**, opened from a gold counter at the top of the screen. It shows:
-  - the treasury in gold;
-  - the tax rate, with − and + in steps of 5%, from 0 to 50%;
-  - last payday's tax income and public pay;
-  - the reserves (5.2).
-- The sim already supports this through `set_tax_percent`. The work is mostly HUD, plus a short history of income and spending per payday to display.
-- Each house inspector keeps showing its own wage and tax, so the effect of a change is visible where villagers feel it.
+- A **gold counter** at the top left shows the treasury. It is the one global counter on the play screen.
+- Clicking it opens the **Treasury panel**:
+  - the treasury in gold, split into free gold and the two reserves (5.2), with −1 g / +1 g transfer buttons;
+  - **tax on wages**, with − and + in steps of 5%, from 0 to 50% (`set_tax_percent`);
+  - the storehouse markup (5.3), shown but not yet adjustable;
+  - **last payday**: tax, storehouse surplus, demolition refunds, public pay and construction, plus any public wages left unpaid;
+  - **net per payday** for the last 6 paydays, newest first;
+  - construction spent since the last payday;
+  - public workers' frustration.
+- The panel closes with ×, Escape, or by opening options, weather or the build menu.
+- Tax does not affect happiness. Happiness changes are still deferred.
+- The sim keeps a ledger: `period` accumulates since the last payday, and `ledger` holds the last `LEDGER_PAYDAYS` (6) closed paydays.
 
-**Still open**
-- The README says global resource counters are hidden. Is a gold counter the agreed exception, or should the panel open from the cog or a storehouse instead?
-- Should tax affect happiness, for example above 30%? Happiness changes are deferred, so the proposal is no for now.
+### 5.2 Reserves and public pay
 
-### 5.2 Reserved funds
+- The treasury has three parts: **free gold**, a **public pay reserve** and a **capital reserve**. The reserves are parts of `treasury`, not extra money, so the money total is unchanged.
+- The player moves gold by hand: `transfer_reserve("public" | "capital", amount)`. A positive amount moves free gold into the reserve and a negative one moves it back. It moves at most what is there, and fails only if nothing moves.
+- **Public pay** (the forester, and later services) draws on the public pay reserve first, then free gold. It never touches the capital reserve.
+- **Construction** (materials and working money) draws on the capital reserve first, then free gold. It never touches the public pay reserve.
+  - Placement fails with "Treasury needs … outside the public pay reserve" when only reserved gold would cover it.
+  - The build card's "have" figure counts only gold construction can use.
+- **Unpaid public workers keep working.** Each worker left unpaid at a payday adds 1 to:
+  - the building's `frustration`, shown in its inspector;
+  - the village's `public_frustration`, shown in the Treasury panel. This village-wide count survives demolition. A faction system will later read it as trade union contentedness.
+- A partly paid crew counts each worker whose wage was not covered. Frustration does not decay yet. When it should is a faction-system question.
+- Not built yet: automatic allocation of tax income to reserves, and reserve targets ("keep 2 paydays of public pay").
 
-**Decision.** The player can set treasury gold aside for public pay or for capital spending.
+### 5.3 Storehouse markup and purse cap
 
-**Proposed design**
-- The treasury becomes three pots: **free**, a **public pay reserve** and a **capital reserve**. All three still count toward the conserved money total.
-- **Public pay** (the forester, and later services such as the chapel) draws from the public pay reserve first, then from free gold. It never touches the capital reserve.
-- **Construction** (materials and working money) draws from the capital reserve first, then from free gold. It never touches the public pay reserve.
-- **Moving gold.** The player moves gold between free and either reserve in the Treasury panel.
-- **Allocation.** Optionally, a share of each payday's tax income is set aside automatically. For example, "put 20% of taxes into public pay".
-- **Building costs.** "Treasury needs …" counts only the gold construction can use. The build card shows which pot pays.
+- **Storehouses sell to households at a markup:** `retail = price + max(1, round(price × markup%))`. The default markup is **10%**.
+  - Bread costs 18 s from a storehouse and 16 s straight from the bakery.
+  - Water costs 3 s from a storehouse and 2 s from a well. The 1 s minimum keeps a margin on cheap goods.
+  - A markup of 0% removes the minimum too.
+- **Everything else stays at chain price:** direct deliveries from producers, every workshop purchase, storehouses buying from producers or each other, pantry buy-backs, and the treasury buying construction logs. So the chain arithmetic is unchanged.
+- `spendable()` and `settle()` use `sale_price(buyer, seller, good)`, so a carrier is sent only when the household can pay that seller's price. A house's status reads "cannot afford …" when its silver is below the storehouse price.
+- **Purse cap.** The margin stays in the storehouse's trading purse. At payday, silver above the purse cap goes to the treasury as **storehouse surplus**. The cap is the larger of:
+  - 2 g (`PURSE_CAP`, twice a storehouse's starting capital);
+  - the silver needed to restock, up to the per-good `good_limit`, every good the village currently makes.
 
-**Still open**
-- **Allocation:** manual transfers only to start, with automatic allocation added later (recommended), or both from the start?
-- **Unpaid public workers:**
-  - they keep working unpaid, as now (recommended for now);
-  - they stop work, like stopped workers, until paid;
-  - or they keep working and their unhappiness waits for the happiness decision.
-- **A reserve target?** For example, "keep 2 paydays of public pay reserved" and top it up automatically.
+  A storehouse with empty shelves therefore keeps construction money and spends it on producers' output. A full storehouse passes its surplus to the treasury.
+- The markup can be changed in the sim (`set_markup_percent`, 0–100%), but not yet from the HUD.
 
-### 5.3 Storehouse buy and sell prices
+### 5.4 Saves
 
-**Decision.** Storehouses buy and sell at different prices.
+New sim snapshot keys: `public_reserve`, `capital_reserve`, `markup_percent`, `public_frustration`, `period` and `ledger`. Buildings gain `frustration`. Snapshots with reserves larger than the treasury, or with malformed ledger entries, are rejected. Version-one campaign saves load with these fields at their defaults.
 
-**Proposed design**
-- A storehouse **buys at the chain price and sells at a markup**: `sell = price + max(1, price × markup%)`, rounded to whole silver. The default markup is 25%, so bread costs 20 s from a storehouse instead of 16 s. The minimum of 1 s keeps the margin on cheap goods such as water.
-- **Direct delivery stays at chain price.** A house fed straight from the bakery or well pays 16 s or 2 s. Living near a producer becomes cheaper than buying from storage, which rewards good layout.
-- `spendable()` and `settle()` use the seller's selling price instead of one price per good.
+### 5.5 Balance results
 
-**Still open**
-- **Who pays the markup?** Households only (retail, recommended), or workshops too?
-  - Charging workshops breaks the chain arithmetic: the bakery would pay more for flour than its bread price recovers.
-  - Workshops would then need a margin of their own, or prices would have to include the markup.
-- **Where the margin goes:**
-  - It stays in the storehouse's trading purse, and anything above a purse cap (such as 2× its starting capital) goes to the treasury at payday (recommended). The treasury then has a second, trade-based income on top of tax.
-  - Straight to the treasury on every sale. This is effectively a sales tax.
-  - It stays in the storehouse only. This keeps the storehouse able to buy, but gives the treasury nothing.
-- **Should the player set the markup** next to the tax rate in the Treasury panel?
+Hour-long headless soaks, seed 73 (`tools/soak_village.gd`, with the storehouse `good_limit` of 30):
 
-### 5.4 After these land
+| Village | Markup | Result after 60 min |
+| --- | --- | --- |
+| Starter + chain, 1 house, no forester | 25% | House out of silver by minute 30 ("cannot afford water"), Tier 1. Treasury 5.9 g → 8.0 g. |
+| Same | 10% | Logs run out first (no forester, "no mature trees nearby"), then silver. Tier 1 by minute 40. |
+| Same | 0% | Logs, then berries run out. Tier 1 by minute 50. |
+| Starter + chain, 1 house + forester | 10% | Tier 2 all hour. Public pay empties the treasury by minute 30, so the forester goes partly unpaid. The house hoards about 8 g. |
+| 2 houses + forester | 25% | Households drained by minute 30. Tier 1 by minute 50, then stuck: nobody makes berries. |
+| Same | **10% (default)** | **Tier 2 all hour.** Savings fall from 3.5 g to 1.3 g and 0.8 g, and the treasury rises from 3.2 g to 5.9 g (minute 15 to 60). In a 2-hour run, both houses are down to 5 s by minute 90 and stay there ("cannot afford logs"). They are still Tier 2 at minute 120, but only just. The treasury holds 7.5 g that never comes back out. |
+| Same | 5% | Tier 2 all hour, close to balanced: savings about 3 g, treasury 2.3 g. |
+| Same, tax 5% | 10% | Tier 2. The treasury empties by minute 20, so public workers go unpaid. |
 
-- **Re-run the 30-minute balance probe** with taxes, reserves and markup together. A markup raises households' cost of living, so wages may need to rise to compensate. Check that a Villager house still stays fully happy at the default settings.
-- **Tests:**
-  - tax control through real HUD input;
-  - reserves protect public pay from construction, and the reverse;
-  - storehouse sales carry the markup while direct sales don't;
-  - money is still conserved across all pots and purses.
+What this shows:
+- **The treasury collects; only construction and public pay spend.** Bread, flour, wheat, water and logs are all labour. So what households spend at chain price comes back as wages, minus tax. The markup and tax drain households toward the treasury. Public pay and building are the only ways back.
+- No single default balances every village. With no public workers, any markup or tax drains households. With a forester, public pay can drain the treasury. Balancing the two is the player's job in the Treasury panel. At 10%, two houses and a forester hold Tier 2 for the hour.
+- Two of the failures are content gaps, not money: no village makes berries, and without a forester the woodcutter runs out of trees.
+- 25% was the proposed markup, but it drained households within 30 minutes in every layout, so the default is now 10%. That only slows the drain: without the player building or adding public workers, households are broke by minute 90 (see 5.6, recycling the margin).
+
+**Tests.** `tests/test_sim.gd` (`_treasury` and `_money`) covers:
+- tax limits;
+- reserve transfers, and that construction and public pay each leave the other's reserve alone;
+- frustration from unpaid public workers, who keep working;
+- the markup only on household purchases from storehouses;
+- the purse-cap sweep and ledger;
+- snapshot round-trip and rejection;
+- money conserved with reserves inside the treasury.
+
+`tests/run_view_tests.gd` (`_check_treasury`) drives the gold counter, tax buttons and reserve buttons through real input. `tests/test_campaign.gd` checks that version-one saves without these fields still load.
+
+### 5.6 Still open
+
+- **Should the player set the markup** next to the tax rate? It is shown read-only for now.
+- **Recycling the margin.** A storehouse's margin reaches households only through the treasury, when the player builds or pays public workers. If the player does neither, even the 10% default leaves households broke after about 90 minutes. Options:
+  - pay carriers from the margin, as storehouse labour into the payroll;
+  - automatic treasury spending, such as upkeep or services;
+  - leave it to the player.
+- **Automatic allocation and reserve targets** (5.2).
+- **When frustration decays**, and what the trade union does with it.
 
 ## 6. Open questions
 
@@ -196,4 +227,4 @@ The inspector shows the money at each building:
 2. **Should needs have weights?** At the moment water counts the same as logs. Survival needs (water, staple food) might count for more than tier goods.
 3. **Labour priority.** On/off is the first step. A per-building priority (high / normal / low) may be needed once villages have 20+ buildings.
 4. **Pantry size by tier.** Six slots fit three goods at two cycles each. Tier 3, with four or more goods, will need a larger pantry or a single cycle of stock.
-5. **Treasury growth.** With one house, taxes add about 0.03 g a minute, and a new house costs 0.92 g. More houses widen the tax base. Storehouse margins (5.3) will add a second income. A higher default tax, or a gold cost on later buildings, may still be needed once Tier 3 exists.
+5. **Treasury growth.** With one house, taxes add about 0.03 g a minute, and a new house costs 0.92 g. More houses widen the tax base. Storehouse surpluses (5.3) now add a second income; see 5.5 for how the two balance against public pay. A higher default tax, or a gold cost on later buildings, may still be needed once Tier 3 exists.

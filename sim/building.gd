@@ -25,10 +25,13 @@ var missing_need := "water"
 var needs_met: Dictionary = {}
 var happiness := 0
 ## Money in silver: a household's savings, a workshop's purse for inputs, or a
-## storehouse's trading purse. Houses also keep their last payday's wage and tax.
+## storehouse's trading purse. Houses also keep their last payday's wage and
+## tax; public buildings (the forester) keep what the treasury last paid them.
 var silver := 0
 var last_wage := 0
 var last_tax := 0
+## Public workers left unpaid keep working; each unpaid worker-payday adds one.
+var frustration := 0
 
 func _init(number: int, row: Dictionary, at: Vector2i, orientation: int = 0) -> void:
 	uid = number
@@ -55,7 +58,7 @@ func cells() -> Array[Vector2i]:
 	return result
 
 func snapshot() -> Dictionary:
-	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"silver":silver,"last_wage":last_wage,"last_tax":last_tax}
+	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration}
 
 static func from_snapshot(state: Dictionary, content):
 	if not content.buildings.has(state.get("id")) or not _point(state.get("cell")) or not _point(state.get("work_cell")):

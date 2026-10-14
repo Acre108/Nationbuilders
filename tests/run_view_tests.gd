@@ -1,5 +1,6 @@
 extends SceneTree
 ## Real Forward+ render and input smoke. Needs a GPU, unlike run_tests.gd.
+const Economy = preload("res://sim/economy.gd")
 var failures: Array[String] = []
 var checks := 0
 var view
@@ -41,17 +42,17 @@ func _run() -> void:
 	check(view.speed == 0, "Options pause simulation")
 	check(view.display.material == null, "Village display has no palette post-processing material")
 	check(view.factory.material.shader.resource_path == "res://render/world.gdshader", "Old meshes use the environment-lit world material")
-	check(not view.hud.pixel_effect_button.button_pressed and not view.pixel_effect_enabled,"Smooth view is the startup default")
-	check(view.pixel_viewport.size == Vector2i(1280,720) and view.pixel_viewport.msaa_3d == Viewport.MSAA_4X and not view.camera.pixel_snap_enabled,"Startup applies full resolution, antialiasing and smooth camera movement")
-	var graphics_snapshot: Dictionary = view.sim.snapshot()
-	var graphics_focus: Vector3 = view.camera.focus
-	await _click(view.hud.pixel_effect_button.get_global_rect().get_center())
-	check(view.pixel_effect_enabled and view.pixel_viewport.size == Vector2i(640,360),"Options can enable the optional pixel view")
-	await _click(view.hud.pixel_effect_button.get_global_rect().get_center())
-	check(not view.pixel_effect_enabled and view.hud.pixel_effect_button.text == "Pixel effect: Off","Options button disables pixel effect")
-	check(view.pixel_viewport.size == Vector2i(1280,720) and view.display.size == Vector2(1280,720),"Smooth view renders at full display resolution")
-	check(view.pixel_viewport.msaa_3d == Viewport.MSAA_4X and not view.camera.pixel_snap_enabled,"Smooth view enables antialiasing and unsnapped camera movement")
-	check(view.sim.snapshot() == graphics_snapshot and view.camera.focus == graphics_focus,"Graphics toggle preserves village state and camera focus")
+	var option_labels: Array[String] = []
+	_collect_button_text(view.hud.options_menu, option_labels)
+	check(not option_labels.is_empty() and not " ".join(option_labels).to_lower().contains("pixel") and not "pixel_effect_button" in view.hud, "Options menu offers no pixel effect (%s)" % ", ".join(option_labels))
+	check(view.pixel_viewport.size == Vector2i(1280,720) and view.display.size == Vector2(1280,720) and view.display.position == Vector2.ZERO, "World renders at full display resolution")
+	check(view.pixel_viewport.msaa_3d == Viewport.MSAA_4X and view.display.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR, "World render is antialiased and smoothly filtered")
+	var camera_before: Vector3 = view.camera.position
+	view.camera.focus += Vector3(0.01,0,0)
+	view.camera.refresh()
+	check((view.camera.position-camera_before-Vector3(0.01,0,0)).length() < 0.001, "Camera follows sub-pixel movement without snapping")
+	view.camera.focus -= Vector3(0.01,0,0)
+	view.camera.refresh()
 	var original_size: Vector2 = view.size
 	view.size = Vector2(1440,900)
 	check(view.pixel_viewport.size == Vector2i(1440,810) and view.display.position == Vector2(0,45),"Smooth rendering follows window size with the same framing")
@@ -63,7 +64,7 @@ func _run() -> void:
 	await _click(view.hud.close_options_button.get_global_rect().get_center())
 	check(not view.hud.options_menu.visible and not view.hud.cog_button.button_pressed, "Options close button resets cog")
 	await _click_cell(_cell(21,21))
-	check(view.selected_uid == view.sim.grid.occupied.get(_cell(21,21)),"Building inspection works with pixel effect off")
+	check(view.selected_uid == view.sim.grid.occupied.get(_cell(21,21)),"Building inspection works at full resolution")
 	await _key(KEY_ESCAPE)
 	await _click(view.hud.cog_button.get_global_rect().get_center())
 	await _key(KEY_ESCAPE)
@@ -71,12 +72,6 @@ func _run() -> void:
 	await _click(view.hud.cog_button.get_global_rect().get_center())
 	await _click(view.hud.restart_button.get_global_rect().get_center())
 	check(view.sim.tick <= 1 and view.sim.buildings.size() == 5 and not view.hud.options_menu.visible, "Options restart resets village and closes menu")
-	check(not view.pixel_effect_enabled and not view.hud.pixel_effect_button.button_pressed,"Restart retains the display preference")
-	await _click(view.hud.cog_button.get_global_rect().get_center())
-	await _click(view.hud.pixel_effect_button.get_global_rect().get_center())
-	check(view.pixel_effect_enabled and view.pixel_viewport.size == Vector2i(640,360) and view.camera.pixel_snap_enabled,"Options restores native pixels and camera snapping")
-	check(view.pixel_viewport.msaa_3d == Viewport.MSAA_DISABLED and view.display.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST,"Pixel mode restores unfiltered rendering")
-	await _click(view.hud.close_options_button.get_global_rect().get_center())
 	view._set_speed(0)
 	check(view.hud.sun_button.position.x < view.hud.cog_button.position.x, "Sun button sits left of the cog")
 	await _click(view.hud.sun_button.get_global_rect().get_center())
@@ -125,6 +120,7 @@ func _run() -> void:
 	view.atmosphere.profile.weather_transition_seconds = 8.0
 	view.atmosphere.wetness = 0.0
 	_check_weather_audio()
+	await _check_treasury()
 	await _click(view.hud.build_button.get_global_rect().get_center())
 	check(view.hud.build_menu.visible and view.hud.category_list.visible and not view.hud.building_list.visible, "Build button opens category list")
 	check(view.hud.build_category_buttons.keys() == ["housing","logistics","resources","food"], "Build categories follow content order")
@@ -208,21 +204,16 @@ func _run() -> void:
 	view.sim.step(500)
 	view._sync_view()
 	check(int(view.sim.produced.get("bread",0)) > 0, "Rendered scene produces bread")
-	check(view.integer_scale == 2 and view.display.size == Vector2(1280,720), "Native pixels use integer nearest upscaling")
 	view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	await RenderingServer.frame_post_draw
 	var final_image := root.get_texture().get_image()
 	check(final_image.save_png("res://artifacts/view-tested.png") == OK, "Capture rendered input-tested scene")
 	var colors: Dictionary = {}
-	var nearest_ok := true
 	for y in range(112,570,2):
 		for x in range(24,960,2):
-			var color := final_image.get_pixel(x,y)
-			colors[color.to_rgba32()] = true
-			nearest_ok = nearest_ok and color == final_image.get_pixel(x+1,y) and color == final_image.get_pixel(x,y+1)
+			colors[final_image.get_pixel(x,y).to_rgba32()] = true
 	check(colors.size() > 32, "Rendered world retains more than the old 32-colour palette (actual %d)" % colors.size())
-	check(nearest_ok, "Each native world pixel is an exact 2x2 block")
 	await _click_cell(_cell(23,18))
 	check(view.hud.inspector_title.text == "Bakery" and view.hud.inspection_progress.visible, "Bakery inspection includes cycle progress bar")
 	var bakery_info: String = view.hud.inspector.get_parsed_text()
@@ -240,14 +231,51 @@ func _run() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/inspection-storehouse.png")
 	await _key(KEY_ESCAPE)
-	view.pixel_viewport.get_texture().get_image().save_png("res://artifacts/native-world.png")
+	view.pixel_viewport.get_texture().get_image().save_png("res://artifacts/world-render.png")
 	await _check_building_rotation()
 	print("HEARTHLANDS VIEW: %d checks, %d failures" % [checks,failures.size()])
 	quit(0 if failures.is_empty() else 1)
 
+## VILLAGERS.md 5.1-5.2: the gold counter opens the Treasury panel, whose
+## buttons set tax and move gold between free and reserved through real input.
+func _check_treasury() -> void:
+	var sim = view.sim
+	var counter: Rect2 = view.hud.treasury_button.get_global_rect()
+	check(view.hud.treasury_button.visible and view.hud.treasury_button.text == Economy.format(sim.treasury), "Gold counter shows the treasury")
+	check(counter.position.x < 40 and counter.end.x < view.hud.map_button.get_global_rect().position.x and not view.hud.blocks_mouse(Vector2(640,40)), "Gold counter sits top left and leaves the top centre clear")
+	await _click(counter.get_center())
+	await process_frame
+	check(view.hud.treasury_menu.visible and view.hud.treasury_button.button_pressed and view.hud.treasury_total.text == Economy.format(sim.treasury), "Gold counter opens the Treasury panel")
+	check(view.hud.blocks_mouse(view.hud.treasury_menu.get_global_rect().get_center()), "Treasury panel blocks clicks on the world behind it")
+	var tax: int = sim.tax_percent
+	await _click(view.hud.tax_buttons[Economy.TAX_STEP].get_global_rect().get_center())
+	check(sim.tax_percent == tax + Economy.TAX_STEP and view.hud.tax_value.text == "%d%%" % sim.tax_percent, "Treasury panel raises tax through real input")
+	for step in (tax + Economy.TAX_STEP) / Economy.TAX_STEP:
+		await _click(view.hud.tax_buttons[-Economy.TAX_STEP].get_global_rect().get_center())
+	check(sim.tax_percent == 0 and view.hud.tax_buttons[-Economy.TAX_STEP].disabled, "Treasury panel lowers tax to zero, then stops")
+	sim.set_tax_percent(tax)
+	var free: int = Economy.free_gold(sim)
+	await _click(view.hud.reserve_buttons.public[Economy.SILVER_PER_GOLD].get_global_rect().get_center())
+	check(sim.public_reserve == mini(Economy.SILVER_PER_GOLD,free) and view.hud.treasury_values.public.text == Economy.format(sim.public_reserve), "Treasury panel sets gold aside for public pay")
+	await _click(view.hud.reserve_buttons.capital[Economy.SILVER_PER_GOLD].get_global_rect().get_center())
+	check(sim.capital_reserve > 0 and Economy.free_gold(sim) == free - sim.public_reserve - sim.capital_reserve and view.hud.treasury_values.free.text == Economy.format(Economy.free_gold(sim)), "Treasury panel sets gold aside for construction")
+	var panel_text: String = view.hud.treasury_ledger.get_parsed_text()
+	check("frustration" in panel_text, "Treasury panel reports public workers' frustration")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/treasury-panel.png")
+	await _click(view.hud.reserve_buttons.public[-Economy.SILVER_PER_GOLD].get_global_rect().get_center())
+	await _click(view.hud.reserve_buttons.capital[-Economy.SILVER_PER_GOLD].get_global_rect().get_center())
+	check(sim.public_reserve == 0 and sim.capital_reserve == 0 and Economy.free_gold(sim) == free, "Treasury panel returns reserved gold to free gold")
+	await _click(view.hud.cog_button.get_global_rect().get_center())
+	check(view.hud.options_menu.visible and not view.hud.treasury_menu.visible and not view.hud.treasury_button.button_pressed, "Options and treasury panels are exclusive")
+	await _key(KEY_ESCAPE)
+	await _click(counter.get_center())
+	await _key(KEY_ESCAPE)
+	check(not view.hud.treasury_menu.visible and not view.hud.treasury_button.button_pressed, "Escape closes the Treasury panel")
+
 func _click_cell(cell: Vector2i) -> void:
 	var local: Vector2 = view.camera.unproject_position(Vector3(cell.x+0.5,0,cell.y+0.5))
-	await _click(view.display.position+local*view.integer_scale)
+	await _click(view.display.position+local)
 
 func _choose_build(id: String) -> void:
 	await _click(view.hud.build_button.get_global_rect().get_center())
@@ -257,7 +285,7 @@ func _choose_build(id: String) -> void:
 func _move_cell(cell: Vector2i) -> void:
 	var local: Vector2 = view.camera.unproject_position(Vector3(cell.x+0.5,view.relief.cell_height(cell),cell.y+0.5))
 	var move := InputEventMouseMotion.new()
-	move.position = view.display.position + local * view.integer_scale
+	move.position = view.display.position + local
 	root.push_input(move)
 	await process_frame
 	await process_frame
@@ -339,6 +367,10 @@ func _check_weather_audio() -> void:
 	view.camera.zoom_size = 48.0
 	check(atmosphere._foliage_density(null,forest) < forest_near, "Zooming out quietens nearby foliage")
 	view.camera.zoom_size = zoom
+
+func _collect_button_text(node: Node, labels: Array[String]) -> void:
+	if node is Button: labels.append((node as Button).text)
+	for child in node.get_children(): _collect_button_text(child, labels)
 
 func _click(point: Vector2) -> void:
 	var move := InputEventMouseMotion.new()

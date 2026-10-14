@@ -37,7 +37,8 @@ func update(sim, house) -> void:
 	else:
 		house.satisfied_ticks = 0
 		house.unsatisfied_ticks += 1
-		var unaffordable: bool = sim.db.goods.has(house.missing_need) and sim.spendable(house) < sim.price(house.missing_need)
+		# Storehouses charge households a markup, so judge against that price.
+		var unaffordable: bool = sim.db.goods.has(house.missing_need) and sim.spendable(house) < sim.economy.retail_price(sim, house.missing_need)
 		house.status = ("cannot afford " if unaffordable else "missing ") + house.missing_need
 		if house.tier > 1 and house.unsatisfied_ticks >= int(row.downgrade_after_ticks):
 			_change_tier(sim, house, house.tier - 1)
