@@ -135,6 +135,16 @@ func _add_walls(factory, out: Dictionary) -> void:
 					foot_colour = top_colour.darkened(0.1)
 				var outward := Vector3(direction.x, 0, direction.y)
 				var normal := outward if a.x + a.y > b.x + b.y else -outward
+				if grid.hex_width > 0.0 and (not grid.inside(cell) or not grid.inside(other)):
+					# Smooth the grid's tiny stair-step faces into the six authored
+					# sides of the hex silhouette, keeping the actual physical mask.
+					var local := (p0 + p1) * 0.5 - Vector2(grid.width,grid.height) * 0.5
+					var best := -INF
+					for side in 6:
+						var candidate := Vector2.from_angle(side * TAU / 6.0)
+						if local.dot(candidate) > best:
+							best = local.dot(candidate)
+							normal = Vector3(candidate.x,0,candidate.y)
 				var corners: Array[Vector3] = [
 					Vector3(p0.x, maxf(a.x, b.x), p0.y), Vector3(p1.x, maxf(a.y, b.y), p1.y),
 					Vector3(p1.x, minf(a.y, b.y), p1.y), Vector3(p0.x, minf(a.x, b.x), p0.y)]

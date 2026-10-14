@@ -8,17 +8,11 @@ remain intact. The art pass creates a cool forest frame around a warm clearing
 and terracotta settlement. Weather and ambient motion continue while gameplay
 is paused.
 
-The village defaults to full display resolution with 4× MSAA and smooth camera
-movement. The Options menu's **Pixel effect** button enables the optional
-640 by 360 pixel view.
-Both modes keep the same framing and world input mapping. The display choice
-survives a village restart and resets to smooth rendering on a new app session.
-Historical art comparisons and the art regression suite explicitly use pixel
-mode so their native-resolution measurements remain comparable.
-
-Smooth rendering is the long-term look. The pixel view is scheduled for
-removal, and the art suite's measurements will then be re-baselined at full
-resolution.
+The village renders at full display resolution with 4× MSAA and smooth camera
+movement. The earlier optional 640 by 360 pixel view was removed on 14 October
+2026, and the art regression suite now measures at full resolution
+(1280 by 720 in the test window). The before/after captures below predate the
+removal; their pixel treatment is incidental.
 
 | Before | After |
 | --- | --- |
@@ -79,10 +73,10 @@ deformation, with the roots planted and rocks static.
 3. **Environmental time.** A single clock and travelling gust field drive
    grass, crops, tree crowns, dapples and drifting seeds. A weather-scaled wind
    clock drives broad gusts over a continuous breeze. Crown displacement scales
-   with tree height and caps at 0.45 world units, about five native pixels at
-   the initial zoom. Large cloud shadows share
+   with tree height and caps at 0.45 world units, about ten pixels at 1280 by
+   720 and the initial zoom. Large cloud shadows share
    the existing sky field, but use a village-sized deck and five density bands.
-   Seeds arrive singly, disappear at night, and use opaque pixel quads.
+   Seeds arrive singly, disappear at night, and use small opaque quads.
    Sparse water glints use short horizontal lines and stepped lifetimes.
 
 Tree/rock contact, grass and ground accents are batched. Grass is substantially
@@ -142,10 +136,18 @@ The art runner checks original camera and tree/rock positions, quiet meadow
 coverage, grass carving and exact regrowth, broad changing cloud light, night
 behaviour, unchanged paused simulation/RNG, and restart. It also compares
 rendered crowns with only wind time advancing, verifies that zero breeze
-freezes deformation and checks storm acceleration. It writes native
+freezes deformation and checks storm acceleration. It writes full-resolution
 cloud/time and night captures plus `artifacts/atmosphere-after.png`.
 
-Validated with Godot 4.7.2 Forward+ on Windows/NVIDIA RTX 3060 Ti: 112 simulation,
-90 view, 251 environment and 273 art checks pass. The palette check measures
-about 42,900 golden native pixels and zero clipped-white pixels. The local engine reports its
-existing sandbox root-certificate-store error; no script or shader errors occur.
+Re-baselined at full resolution on 14 October 2026 with Godot 4.7.2 Forward+
+on Windows/NVIDIA RTX 3060 Ti: 114 view and 1,936 art checks pass. At 1280 by
+720 the palette check measures 248,135 golden pixels and zero clipped-white
+pixels; four wind seconds change 182,612 crown-region pixels, and 40
+environmental seconds of cloud drift change 52,692 clearing pixels. Each
+threshold was scaled from its pixel-mode value by the same factor as its
+measurement (about four times, matching the pixel area), so the margins are
+unchanged.
+
+## Generated hex-site refinement
+
+New campaign sites now use the [hex village layout](HEX_VILLAGES.md), with region-specific conifers/birches/oaks, planted-root variation within resource cells, biome ground tints and masked soil sides. The full-site overview uses a quiet weather-aware backdrop while retaining sky lighting, cloud shadows and shared wind. Legacy authored sites keep their existing appearance. Use `tools/run_tests.ps1 -GeneratedSites` for paired overview/close-up GPU captures and boundary/state checks.

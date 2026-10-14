@@ -236,10 +236,11 @@ func _features() -> ArrayMesh:
 				outer0.y = WATER_LEVEL + 0.005
 				outer1.y = WATER_LEVEL + 0.005
 				_quad(st, [first, second, outer1, outer0], Vector3.UP, water_colour.lightened(0.18), water_colour.lightened(0.06))
-	var start := centre(world.start)
-	start.y = surface_height(world.start, start)
-	_box(st, start + Vector3(0.0, 0.45, 0.0), Vector3(0.04, 0.9, 0.04), Color("4a3a2c"))
-	_box(st, start + Vector3(0.18, 0.78, 0.0), Vector3(0.34, 0.2, 0.02), Color("c8553d"))
+	if world.hex(world.start).settlement.is_empty():
+		var start := centre(world.start)
+		start.y = surface_height(world.start, start)
+		_box(st, start + Vector3(0.0, 0.45, 0.0), Vector3(0.04, 0.9, 0.04), Color("4a3a2c"))
+		_box(st, start + Vector3(0.18, 0.78, 0.0), Vector3(0.34, 0.2, 0.02), Color("c8553d"))
 	return st.commit()
 
 ## Per-material controls keep motion small at overview scale. Mesh placement

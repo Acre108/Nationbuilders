@@ -9,7 +9,6 @@ signal inspection_closed
 signal workers_toggled
 signal speed_selected(speed: int)
 signal restart_requested
-signal pixel_effect_toggled(enabled: bool)
 signal weather_selected(kind: AtmosphereProfile.Weather, intensity: float)
 signal time_of_day_selected(hour: float)
 signal clock_toggled(running: bool)
@@ -21,12 +20,31 @@ signal campaign_save_requested
 signal campaign_menu_requested
 signal campaign_abandon_requested
 signal campaign_charter_requested
+signal site_overview_requested
 signal run_choice_selected(choice: String)
+signal tax_selected(percent: int)
+signal reserve_transfer_requested(pot: String, amount: int)
+## Gold counter (top left), the one global counter on the play screen. It
+## opens the Treasury panel: reserves, tax and the payday ledger.
+var treasury_button: Button
+var treasury_menu: PanelContainer
+var close_treasury_button: Button
+var treasury_total: Label
+var treasury_values: Dictionary = {}
+var reserve_buttons: Dictionary = {}
+var tax_value: Label
+var tax_buttons: Dictionary = {}
+var markup_value: Label
+var treasury_ledger: RichTextLabel
+var shown_tax := Economy.DEFAULT_TAX_PERCENT
+## The village last refreshed, so the Treasury panel fills as soon as it opens.
+var shown_sim
 var campaign_save_button: Button
 var campaign_menu_button: Button
 var campaign_map_button: Button
 var campaign_abandon_button: Button
 var campaign_charter_button: Button
+var site_overview_button: Button
 var run_card: Control
 var run_card_title: Label
 var run_card_text: Label
@@ -49,7 +67,6 @@ var options_menu: PanelContainer
 var close_options_button: Button
 var speed_buttons: Dictionary = {}
 var restart_button: Button
-var pixel_effect_button: Button
 var sun_button: Button
 var weather_menu: PanelContainer
 var close_weather_button: Button
@@ -226,12 +243,13 @@ func _ready() -> void:
 	map_button.toggle_mode = false
 	map_button.pressed.connect(func(): world_map_requested.emit())
 	root.add_child(map_button)
+	_build_treasury_menu()
 	_build_weather_menu()
 	options_menu = _panel()
 	options_menu.visible = false
 	root.add_child(options_menu)
 	var options_column := VBoxContainer.new()
-	options_column.add_theme_constant_override("separation",6)
+	options_column.add_theme_constant_override("separation",4)
 	options_menu.add_child(options_column)
 	var options_header := HBoxContainer.new()
 	options_column.add_child(options_header)
@@ -253,12 +271,13 @@ func _ready() -> void:
 		speed_buttons[entry[1]] = button
 		speed_row.add_child(button)
 	options_column.add_child(HSeparator.new())
-	pixel_effect_button = _button("Pixel effect: Off")
-	pixel_effect_button.toggle_mode = true
-	pixel_effect_button.button_pressed = false
-	pixel_effect_button.tooltip_text = "Toggle pixel rendering or a smooth full-resolution view"
-	pixel_effect_button.toggled.connect(func(enabled): pixel_effect_toggled.emit(enabled))
-	options_column.add_child(pixel_effect_button)
+	site_overview_button = _button("Site overview (Home)")
+	site_overview_button.tooltip_text = "Frame the whole village site"
+	site_overview_button.pressed.connect(func():
+		close_options_menu()
+		site_overview_requested.emit()
+	)
+	options_column.add_child(site_overview_button)
 	options_column.add_child(HSeparator.new())
 	restart_button = _button("Restart village")
 	restart_button.pressed.connect(func(): restart_requested.emit())
@@ -334,6 +353,7 @@ func show_run_card(kind: String, village_name: String, best_tier: int, populatio
 	close_options_menu()
 	close_build_menu()
 	close_weather_menu()
+	close_treasury_menu()
 	run_card_kind = kind
 	run_card_title.text = "Ready for a charter" if kind == "charter" else "Abandon this village?" if kind == "abandoned" else "The village has fallen"
 	run_card_text.text = "%s\nTier %d · %d people · %d ticks\n\n%s" % [village_name, best_tier, population, ticks,
@@ -349,6 +369,163 @@ func show_run_card(kind: String, village_name: String, best_tier: int, populatio
 func close_run_card() -> void:
 	run_card.hide()
 	run_card_kind = ""
+
+func _build_treasury_menu() -> void:
+	treasury_button = _button("")
+	treasury_button.toggle_mode = true
+	treasury_button.custom_minimum_size = Vector2(0,48)
+	treasury_button.tooltip_text = "Village treasury: open the Treasury panel"
+	var image := Image.new()
+	image.load_svg_from_string(FileAccess.get_file_as_string("res://view/overlays/coin.svg"),1.0)
+	treasury_button.icon = ImageTexture.create_from_image(image)
+	treasury_button.add_theme_font_size_override("font_size",17)
+	treasury_button.add_theme_color_override("font_color",Color("d6c288"))
+	treasury_button.add_theme_color_override("font_pressed_color",Color("d6c288"))
+	treasury_button.add_theme_color_override("font_hover_color",Color("f0e2bc"))
+	treasury_button.pressed.connect(_toggle_treasury_menu)
+	root.add_child(treasury_button)
+	treasury_menu = _panel()
+	treasury_menu.visible = false
+	root.add_child(treasury_menu)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation",6)
+	column.custom_minimum_size = Vector2(330,0)
+	treasury_menu.add_child(column)
+	var header := HBoxContainer.new()
+	column.add_child(header)
+	var title := _label("Treasury",20)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	close_treasury_button = _button("×")
+	close_treasury_button.tooltip_text = "Close treasury"
+	close_treasury_button.pressed.connect(close_treasury_menu)
+	header.add_child(close_treasury_button)
+	treasury_total = _label("",22)
+	treasury_total.add_theme_color_override("font_color",Color("d6c288"))
+	column.add_child(treasury_total)
+	# Reserves are moved by hand: construction cannot spend public pay, and
+	# public pay cannot spend the capital reserve.
+	for entry in [["free","Free gold","Spent by construction and public pay alike"],
+			["public","Public pay reserve","Pays public workers first; construction never touches it"],
+			["capital","Capital reserve","Pays for construction first; public pay never touches it"]]:
+		var buttons: Array = [] if entry[0] == "free" else [["−1 g",-Economy.SILVER_PER_GOLD],["+1 g",Economy.SILVER_PER_GOLD]]
+		var row := _treasury_row(column,entry[1],entry[2],buttons,func(amount): reserve_transfer_requested.emit(entry[0],amount))
+		treasury_values[entry[0]] = row[0]
+		if not row[1].is_empty(): reserve_buttons[entry[0]] = row[1]
+	column.add_child(HSeparator.new())
+	var tax_row := _treasury_row(column,"Tax on wages","Withheld from household wages at payday",[["−%d%%" % Economy.TAX_STEP,-Economy.TAX_STEP],["+%d%%" % Economy.TAX_STEP,Economy.TAX_STEP]],
+		func(step): tax_selected.emit(clampi(shown_tax + step,0,Economy.MAX_TAX_PERCENT)))
+	tax_value = tax_row[0]
+	tax_buttons = tax_row[1]
+	markup_value = _treasury_row(column,"Storehouse markup","Households pay this above the chain price when they buy from a storehouse; producers sell direct at the chain price",[],Callable())[0]
+	column.add_child(HSeparator.new())
+	treasury_ledger = RichTextLabel.new()
+	treasury_ledger.bbcode_enabled = true
+	treasury_ledger.fit_content = true
+	treasury_ledger.scroll_active = false
+	treasury_ledger.custom_minimum_size = Vector2(330,0)
+	treasury_ledger.add_theme_font_size_override("normal_font_size",14)
+	treasury_ledger.add_theme_font_size_override("bold_font_size",14)
+	treasury_ledger.add_theme_color_override("default_color",Color("e4dfd2"))
+	treasury_ledger.tooltip_text = "Frustration counts unpaid worker-paydays. Unpaid public workers keep working;\nthe count will feed the trade union's contentedness once factions exist."
+	column.add_child(treasury_ledger)
+
+## One labelled value with optional step buttons: [[text, amount], ...].
+## Returns [value label, {amount: button}].
+func _treasury_row(parent: Control, title: String, tooltip: String, steps: Array, action: Callable) -> Array:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation",6)
+	row.tooltip_text = tooltip
+	parent.add_child(row)
+	var name_label := _label(title,15)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	name_label.tooltip_text = tooltip
+	row.add_child(name_label)
+	var value := _label("",15)
+	value.custom_minimum_size = Vector2(70,0)
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(value)
+	var buttons := {}
+	for step in steps:
+		var button := _button(step[0])
+		button.add_theme_font_size_override("font_size",13)
+		button.custom_minimum_size = Vector2(52,0)
+		button.pressed.connect(func(): action.call(step[1]))
+		buttons[step[1]] = button
+		row.add_child(button)
+	if steps.is_empty():
+		# Keep values in one column with the rows that have two step buttons.
+		var spacer := Control.new()
+		spacer.custom_minimum_size = Vector2(52*2+6,0)
+		row.add_child(spacer)
+	return [value,buttons]
+
+func _toggle_treasury_menu() -> void:
+	treasury_menu.visible = not treasury_menu.visible
+	treasury_button.button_pressed = treasury_menu.visible
+	if treasury_menu.visible:
+		close_options_menu()
+		close_build_menu()
+		close_weather_menu()
+		if shown_sim != null: _refresh_treasury(shown_sim)
+	_layout()
+
+func close_treasury_menu() -> void:
+	treasury_menu.visible = false
+	treasury_button.button_pressed = false
+
+func _refresh_treasury(sim) -> void:
+	shown_sim = sim
+	treasury_button.text = Economy.format(sim.treasury)
+	if not treasury_menu.visible:
+		return
+	shown_tax = sim.tax_percent
+	var free: int = Economy.free_gold(sim)
+	treasury_total.text = Economy.format(sim.treasury)
+	treasury_values.free.text = Economy.format(free)
+	treasury_values.public.text = Economy.format(sim.public_reserve)
+	treasury_values.capital.text = Economy.format(sim.capital_reserve)
+	for pot in reserve_buttons:
+		reserve_buttons[pot][-Economy.SILVER_PER_GOLD].disabled = int(sim.get(pot + "_reserve")) == 0
+		reserve_buttons[pot][Economy.SILVER_PER_GOLD].disabled = free == 0
+	tax_value.text = "%d%%" % sim.tax_percent
+	tax_buttons[-Economy.TAX_STEP].disabled = sim.tax_percent <= 0
+	tax_buttons[Economy.TAX_STEP].disabled = sim.tax_percent >= Economy.MAX_TAX_PERCENT
+	markup_value.text = "%d%%" % sim.markup_percent
+	var text := _treasury_ledger_text(sim)
+	if treasury_ledger.text != text:
+		treasury_ledger.text = text
+		_layout()
+
+func _treasury_ledger_text(sim) -> String:
+	var text := ""
+	if sim.ledger.is_empty():
+		text += "[color=#868f7a]Payday every %.0f s: tax and storehouse surpluses come in, public workers are paid.[/color]\n" % (float(sim.PAYDAY_TICKS)/10.0)
+	else:
+		# Tax is always listed; other lines only when they moved gold.
+		var last: Dictionary = sim.ledger[-1]
+		text += "[b]Last payday[/b]\n[table=2]"
+		for entry in [["Tax on wages","tax",1],["Storehouse surplus","trade",1],["Demolition refunds","refunds",1],["Public workers","public_pay",-1],["Construction","construction",-1]]:
+			if entry[1] == "tax" or int(last[entry[1]]) != 0:
+				text += "[cell][color=#a9b39a]%s[/color]  [/cell][cell]%s[/cell]" % [entry[0],_signed_silver(int(last[entry[1]])*entry[2])]
+		text += "[/table]\n"
+		if int(last.unpaid) > 0:
+			text += "[color=#d98c6f]Public workers went unpaid %s[/color]\n" % Economy.format(int(last.unpaid))
+		var nets: Array[String] = []
+		for index in range(sim.ledger.size()-1,-1,-1):
+			var entry: Dictionary = sim.ledger[index]
+			nets.append(_signed_silver(int(entry.tax) + int(entry.trade) + int(entry.refunds) - int(entry.public_pay) - int(entry.construction)))
+		text += "\n[b]Net per payday[/b]  [color=#868f7a]newest first[/color]\n%s\n" % "  ·  ".join(nets)
+	if int(sim.period.construction) > 0:
+		text += "[b]Since last payday[/b]  construction %s\n" % _signed_silver(-int(sim.period.construction))
+	text += "[b]Public workers' frustration[/b]  " + ("%d" % sim.public_frustration if sim.public_frustration == 0 else "[color=#d98c6f]%d[/color]" % sim.public_frustration)
+	return text
+
+func _signed_silver(amount: int) -> String:
+	if amount == 0:
+		return "[color=#868f7a]0 s[/color]"
+	return "[color=#%s]%s%s[/color]" % ["a8c38a" if amount > 0 else "d98c6f","+" if amount > 0 else "",Economy.format(amount)]
 
 func _build_weather_menu() -> void:
 	weather_menu = _panel()
@@ -528,6 +705,7 @@ func _toggle_weather_menu() -> void:
 	if weather_menu.visible:
 		close_options_menu()
 		close_build_menu()
+		close_treasury_menu()
 	_layout()
 
 func close_weather_menu() -> void:
@@ -627,6 +805,7 @@ func _good_icon(good: String, color: String) -> Texture2D:
 func _toggle_build_menu() -> void:
 	close_options_menu()
 	close_weather_menu()
+	close_treasury_menu()
 	build_menu.visible = not build_menu.visible
 	build_button.button_pressed = build_menu.visible
 	if build_menu.visible:
@@ -644,6 +823,7 @@ func _toggle_options_menu() -> void:
 	if options_menu.visible:
 		close_build_menu()
 		close_weather_menu()
+		close_treasury_menu()
 		inspection_closed.emit()
 		tool_selected.emit("inspect")
 	_layout()
@@ -656,14 +836,11 @@ func set_speed(value: int) -> void:
 	for speed_value in speed_buttons:
 		speed_buttons[speed_value].set_pressed_no_signal(speed_value == value)
 
-func set_pixel_effect(enabled: bool) -> void:
-	pixel_effect_button.set_pressed_no_signal(enabled)
-	pixel_effect_button.text = "Pixel effect: On" if enabled else "Pixel effect: Off"
-
 func reset() -> void:
 	close_build_menu()
 	close_options_menu()
 	close_weather_menu()
+	close_treasury_menu()
 	placement_card.visible = false
 	side.visible = false
 	toast.visible = false
@@ -719,6 +896,10 @@ func _layout() -> void:
 	weather_menu.position = Vector2(screen.x-weather_menu.size.x-18,78)
 	options_menu.size = Vector2(300,0).max(options_menu.get_combined_minimum_size())
 	options_menu.position = Vector2(screen.x-options_menu.size.x-18,78)
+	treasury_button.reset_size()
+	treasury_button.position = Vector2(18,18)
+	treasury_menu.reset_size()
+	treasury_menu.position = Vector2(18,78)
 	toast.reset_size()
 	toast.position = Vector2((screen.x-toast.size.x)/2.0,20).floor()
 
@@ -774,15 +955,16 @@ func blocks_mouse(point: Vector2) -> bool:
 	if run_card.visible: return true
 	if options_menu.visible:
 		return true
-	for button in [cog_button,sun_button,map_button]:
+	for button in [cog_button,sun_button,map_button,treasury_button]:
 		if button.get_global_rect().has_point(point):
 			return true
-	for panel in [bottom,build_menu,placement_card,side,toast,weather_menu]:
+	for panel in [bottom,build_menu,placement_card,side,toast,weather_menu,treasury_menu]:
 		if panel.visible and panel.get_global_rect().has_point(point):
 			return true
 	return false
 
 func refresh(sim, selected_id: int, tool: String, rotation_quarters: int = 0) -> void:
+	_refresh_treasury(sim)
 	demolish_button.button_pressed = tool == "demolish"
 	demolish_button.modulate = Color("d6c288") if tool == "demolish" else Color.WHITE
 	for id in build_buttons:
@@ -839,7 +1021,12 @@ func _refresh_inspection(sim, building) -> void:
 				if not row.inputs.is_empty():
 					text += "[b]Purse[/b]  %s for buying inputs\n" % Economy.format(building.silver)
 			else:
-				text += "[b]Paid by[/b]  the treasury, %s per payday\n" % Economy.format(Economy.WAGE * int(row.workers))
+				var due := Economy.WAGE * int(row.workers)
+				text += "[b]Paid by[/b]  the treasury, %s per payday\n" % Economy.format(due)
+				if building.staffed and sim.tick >= sim.PAYDAY_TICKS:
+					text += "[b]Last payday[/b]  %s\n" % (Economy.format(building.last_wage) if building.last_wage >= due else "[color=#d98c6f]%s of %s: working unpaid[/color]" % [Economy.format(building.last_wage),Economy.format(due)])
+				if building.frustration > 0:
+					text += "[b]Frustration[/b]  [color=#d98c6f]%d unpaid worker-paydays[/color]\n" % building.frustration
 			text += "[b]Cycle[/b]  %.1f / %.1f s" % [building.progress/10.0,float(row.cycle_ticks)/10.0]
 			inspection_progress.visible = true
 			inspection_progress.max_value = float(row.cycle_ticks)
@@ -873,7 +1060,9 @@ func _refresh_inspection(sim, building) -> void:
 					if not carrier.cargo.is_empty(): carrying += 1
 			text += "\n[b]Carriers[/b]  %d active / %d\n[b]Carrying goods[/b]  %d\n\n" % [active,total,carrying]
 			text += "[b]Storage[/b]  %d / %d\n%s\n\n" % [building.inventory.total(),building.inventory.capacity,_goods(building.inventory.items,sim.db)]
-			text += "[b]Trading purse[/b]  %s\n[b]Village treasury[/b]  %s  ·  tax %d%% of wages" % [Economy.format(building.silver),Economy.format(sim.treasury),sim.tax_percent]
+			text += "[b]Trading purse[/b]  %s  ·  keeps up to %s\n" % [Economy.format(building.silver),Economy.format(sim.economy.purse_cap(sim,building))]
+			text += "[b]Sells to households[/b]  at +%d%%; buys at the chain price\n" % sim.markup_percent
+			text += "[b]Village treasury[/b]  %s  ·  tax %d%% of wages" % [Economy.format(sim.treasury),sim.tax_percent]
 	inspector.text = text
 
 func _goods(items: Dictionary, db) -> String:
@@ -888,7 +1077,10 @@ func _needs_text(house, consumption: Dictionary, sim) -> String:
 	var parts: Array[String] = []
 	for good in consumption:
 		var colour := "a8c38a" if house.needs_met.has(good) else "d98c6f"
-		parts.append("[color=#%s]%d %s (%s)[/color]" % [colour,int(consumption[good]),sim.db.goods[good].name,Economy.format(sim.price(good))])
+		# Direct from the producer at the chain price, or from a storehouse with its markup.
+		var retail: int = sim.economy.retail_price(sim,good)
+		var price_text := Economy.format(sim.price(good)) if retail == sim.price(good) else "%s, %s stored" % [Economy.format(sim.price(good)),Economy.format(retail)]
+		parts.append("[color=#%s]%d %s (%s)[/color]" % [colour,int(consumption[good]),sim.db.goods[good].name,price_text])
 	return ", ".join(parts)
 
 func _slot_goods(storage, recipe: Dictionary, db) -> String:
@@ -907,7 +1099,10 @@ func _refresh_placement(sim, row: Dictionary, rotation_quarters: int = 0) -> voi
 	var lines: Array[String] = ["[b]Cost[/b]  " + ("Free" if cost_parts.is_empty() else ", ".join(cost_parts))]
 	var gold_cost: int = sim.economy.construction_price(sim,row)
 	if gold_cost > 0:
-		lines.append("[b]Treasury pays[/b]  [color=#%s]%s[/color] [color=#868f7a](have %s)[/color]" % ["e4dfd2" if sim.treasury >= gold_cost else "d98c6f",Economy.format(gold_cost),Economy.format(sim.treasury)])
+		# Construction draws on the capital reserve, then free gold; never on public pay.
+		var funds: int = Economy.construction_funds(sim)
+		lines.append("[b]Treasury pays[/b]  [color=#%s]%s[/color] [color=#868f7a](have %s%s)[/color]" % ["e4dfd2" if funds >= gold_cost else "d98c6f",Economy.format(gold_cost),Economy.format(funds),
+			"" if sim.public_reserve == 0 else " outside public pay"])
 	if int(row.workers) > 0:
 		lines.append("[b]Workers[/b]  %d" % int(row.workers))
 	match row.kind:

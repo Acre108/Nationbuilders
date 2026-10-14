@@ -63,6 +63,7 @@ func _run() -> void:
 	view._sync_view()
 	check(view.sim.grid.trees.has(cell) and plant.scale == Vector3.ONE,"Mature tree becomes full size and harvestable")
 	check(view.deposit_nodes.has(cell),"Timber overlay shows the newly mature tree")
+	check_incremental_matches_full()
 	await capture("forestry-grown")
 	view.camera.focus = Vector3(43,0,48)
 	view.camera.zoom_size = 66
@@ -75,6 +76,22 @@ func _run() -> void:
 	await process_frame
 	print("FORESTRY VIEW: %d checks, %d failures" % [checks,failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+## Felling, planting and growth update the ground and grass only near the
+## change; the result must equal rebuilding the whole site.
+func check_incremental_matches_full() -> void:
+	var GridChanges = preload("res://view/grid_changes.gd")
+	var factory = view.factory
+	var foliage = view.foliage
+	var incremental := [factory.context_image.get_data(), factory.terrain_node.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR], foliage.grass.multimesh.buffer, foliage.contact.multimesh.buffer, foliage.meadow_cells, foliage.detailed_meadow_cells]
+	factory.context_changes = GridChanges.new()
+	factory.context_revision = -1
+	factory.forest_ground_changes = GridChanges.new()
+	factory.sync_forest_ground(view.sim.grid)
+	foliage.changes = GridChanges.new()
+	foliage.sync_grid(view.sim.grid)
+	var full := [factory.context_image.get_data(), factory.terrain_node.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR], foliage.grass.multimesh.buffer, foliage.contact.multimesh.buffer, foliage.meadow_cells, foliage.detailed_meadow_cells]
+	check(incremental == full,"Incremental ground and grass updates match a full rebuild")
 
 func capture(label: String) -> void:
 	for frame in 4: await process_frame

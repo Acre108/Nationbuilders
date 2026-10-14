@@ -11,6 +11,7 @@ func run(t) -> void:
 	_legacy(t)
 	_hex_math(t)
 	_package_validation(t)
+	_footprint_boundary(t)
 	_terraces_shape(t)
 	_relief_rules(t)
 	_terraces_chain(t)
@@ -58,6 +59,26 @@ func _package_validation(t) -> void:
 	t.check(not broken.error().is_empty(), "Reject site arrays of the wrong size")
 	var sim = Sim.new(73, null, broken)
 	t.check(not sim.valid and not sim.place("well", Vector2i(1, 1)), "An invalid site stops the run instead of crashing")
+	var bad_mask = SitePackage.new(40,40)
+	bad_mask.footprint.resize(3)
+	t.check(not bad_mask.error().is_empty(), "Reject physical boundary masks of the wrong size")
+
+func _footprint_boundary(t) -> void:
+	var site = SitePackage.new(40,40)
+	var outside := Vector2i(1,1)
+	site.footprint[site.index(outside)] = 0
+	var sim = Sim.new(73,null,site)
+	var grid = sim.grid
+	t.check(not grid.inside(outside) and grid.terrain_at(outside) == "void" and not grid.is_ramp(outside) and not grid.in_reach(outside), "Physical mask applies to all terrain and reach queries")
+	t.check(not sim.place("well",outside) and not sim.place_road([outside]), "Buildings and roads cannot enter backing-storage holes")
+	grid.roads[outside] = true
+	grid.roads[outside + Vector2i.RIGHT] = true
+	t.check(grid.astar(outside,outside + Vector2i.RIGHT).is_empty() and not grid.passable(outside,outside + Vector2i.RIGHT), "Injected exterior roads cannot bypass the physical boundary")
+	grid.plant_tree(outside,1)
+	t.check(not grid.saplings.has(outside), "Planting cannot enter backing-storage holes")
+	grid.saplings[outside] = 1
+	grid.grow_trees(2)
+	t.check(not grid.trees.has(outside), "Injected exterior saplings never mature into resources")
 
 func _terraces_shape(t) -> void:
 	var a = Sites.terraces()

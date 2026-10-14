@@ -73,13 +73,8 @@ func height(coord: Vector2i, point: Vector3) -> float:
 		support = lerpf(left, right, along) + (1.0 - lerpf(left, right, along)) * sin(along * PI)
 	var taper := lerpf(1.0, support, smoothstep(0.55, 1.0, radial))
 	var sample_point := Vector2(point.x, point.z)
-	if not art.linked_tiles:
-		sample_point += Vector2(coord.x * 13.7, coord.y * 19.3)
 	var rise := TerrainLayout.relief_at(model.world, coord, sample_point)
-	# Keep lakes and river arms level, including their banks.
-	var clearance := water_distance(coord, point)
-	var dry := smoothstep(0.20, 0.38, clearance)
-	return model.top_of(coord) + rise * taper * dry * art.relief_strength
+	return model.top_of(coord) + rise * taper * art.relief_strength
 
 func water_distance(coord: Vector2i, point: Vector3) -> float:
 	point.y = 0.0
@@ -129,7 +124,6 @@ func ground_colour(coord: Vector2i, point: Vector3) -> Color:
 
 func grove_at(coord: Vector2i, point: Vector3) -> float:
 	var p := Vector2(point.x, point.z)
-	if not art.linked_tiles: p += Vector2(coord.x * 11.0, coord.y * 17.0)
 	return TerrainLayout.grove_at(model.world, coord, p)
 
 func detail_at(coord: Vector2i, point: Vector3) -> bool:

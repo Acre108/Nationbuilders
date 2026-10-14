@@ -116,3 +116,7 @@ Compare the new scene with the village references at overview and inspection zoo
 - Presentation changes preserve simulation state, RNG, saves and input behaviour.
 
 Use the relevant existing suites after a runtime art change: `tools/run_tests.ps1 -Art`, `-Buildings`, `-WorldMap` and `-Campaign`. Run the simulation suite when a change could affect simulation behaviour. Keep the implementation guides and comparison captures current as the look develops.
+
+## Generated village sites
+
+The [hex-village implementation](HEX_VILLAGES.md) applies the same direction to terrain generated from world tiles: shared river/grove/ridge layout, warm clearings, cool woodland, regional species, quieter root placement and soil sides following the hex boundary. Full-site views use a calm weather-aware backdrop. Review these sites at Home overview and building inspection zoom, alongside their matching world tile.

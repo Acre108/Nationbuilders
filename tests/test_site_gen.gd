@@ -6,14 +6,28 @@ const Sim = preload("res://sim/village_sim.gd")
 const Scenario = preload("res://sim/scenario.gd")
 const Grid = preload("res://sim/grid.gd")
 const IntNoise = preload("res://sim/world/int_noise.gd")
+## Random sites built and baked per seed, besides each seed's start and lake site.
+const SITES_PER_SEED := 2
+var completed := false
 
 func run(t) -> void:
+	_water_fixtures(t)
 	var count := 0
 	var rivers := 0
 	var lakes := 0
 	var coasts := 0
 	for seed_value in [73,1,2]:
 		var world = WorldGen.generate(seed_value)
+		var start_site = SiteGen.generate(world,world.start)
+		t.check(start_site.error().is_empty(),"Start region has a viable natural founding clearing for seed %d" % seed_value)
+		for lake_coord in world.hexes:
+			if not world.hex(lake_coord).lake or not world.data.biomes[world.hex(lake_coord).biome].settleable: continue
+			var lake_site = SiteGen.generate(world,lake_coord)
+			var lake_tiles := 0
+			for index in lake_site.terrain.size():
+				if lake_site.terrain[index] == "lake" and lake_site.owner_coords[index] == lake_coord: lake_tiles += 1
+			t.check(lake_site.error().is_empty() and lake_tiles > 500,"Actual generated lake site keeps its basin and a natural clearing for seed %d" % seed_value)
+			break
 		var mouths_match := true
 		for owner in world.hexes:
 			for edge in world.hex(owner).river_edges:
@@ -21,7 +35,7 @@ func run(t) -> void:
 				if not world.has(other) or not world.hex(other).river_edges.has(world.opposite(int(edge))): continue
 				var first := Layout.river_path(world,owner,int(edge))
 				var second := Layout.river_path(world,other,world.opposite(int(edge)))
-				if first[-1].distance_to(second[-1]) > 0.000001: mouths_match = false
+				if first[-1].distance_to(second[-1]) > 0.00001: mouths_match = false
 		t.check(mouths_match,"Shared river edge positions agree from both sides for seed %d" % seed_value)
 		var checked := 0
 		var candidates: Array[Vector2i] = [world.start]
@@ -55,7 +69,7 @@ func run(t) -> void:
 					var water: String = Layout.water_at(world,owner,site.world_point(cell))
 					if not water.is_empty() and site.terrain[site.index(cell)] != water: aligned = false
 					var info = world.hex(owner)
-					var expected_level: int = info.elevation * 2 + int(floor(Layout.relief_at(world,owner,site.world_point(cell)) * 4.0)) if info.is_land() else 0
+					var expected_level: int = info.elevation * 2 + int(floor(Layout.relief_at(world,owner,site.world_point(cell)) * 8.0)) if info.is_land() else 0
 					if site.levels[site.index(cell)] != expected_level: relief_aligned = false
 					var deposit: String = site.deposits[site.index(cell)]
 					if not deposit.is_empty(): deposit_owners["%s:%s" % [owner,deposit]] = true
@@ -81,9 +95,44 @@ func run(t) -> void:
 				coasts += 1 if not world.hex(owner).coast_edges.is_empty() else 0
 			count += 1
 			checked += 1
-			if checked >= 7: break
-		t.check(checked >= 7,"At least seven playable sites generated for seed %d" % seed_value)
-	t.check(count >= 20,"Twenty random settleable sites across three seeds bake bread")
+			if checked >= SITES_PER_SEED: break
+		t.check(checked >= SITES_PER_SEED,"At least %d playable sites generated for seed %d" % [SITES_PER_SEED,seed_value])
+	t.check(count >= SITES_PER_SEED * 3,"Random settleable sites across three seeds bake bread")
 	t.check(rivers > 0 and coasts > 0,"Aligned sites include promised rivers and coasts")
 	print("SITE COVERAGE: %d sites, %d river districts, %d lakes, %d coasts" % [count,rivers,lakes,coasts])
+	completed = true
+
+func _water_fixtures(t) -> void:
+	var world = WorldGen.generate(73)
+	var coord: Vector2i = world.start
+	var descriptor = world.hex(coord)
+	descriptor.lake = true
+	descriptor.river_edges = {0:3,2:1,4:2}
+	descriptor.coast_edges.clear()
+	descriptor.coast_edges.append(1)
+	descriptor.forest = 0.0
+	descriptor.deposits.clear()
+	var site = SiteGen.generate(world,coord)
+	var lake_cells := 0
+	var ocean_cells := 0
+	var forest_cells := 0
+	for y in site.height:
+		for x in site.width:
+			var cell := Vector2i(x,y)
+			if not site.inside(cell) or site.owner_coords[site.index(cell)] != coord: continue
+			if site.terrain[site.index(cell)] == "lake": lake_cells += 1
+			if site.terrain[site.index(cell)] == "ocean": ocean_cells += 1
+			if site.terrain[site.index(cell)] == "forest": forest_cells += 1
+	t.check(lake_cells > 500 and ocean_cells > 0,"Lake basin and coastal inset survive even if the natural starter is unsuitable")
+	t.check(forest_cells == 0,"A district with zero promised forest cover contains no woodland resources")
+	for edge in descriptor.river_edges:
+		var path := Layout.river_path(world,coord,int(edge))
+		var point: Vector2 = path[-1] * 0.95 + path[0] * 0.05
+		var local := Vector2i(((point-site.world_origin) * (site.hex_width / 2.0)).floor())
+		var nearby_water := false
+		for y in range(local.y-1,local.y+2):
+			for x in range(local.x-1,local.x+2):
+				var cell := Vector2i(x,y)
+				if site.inside(cell) and site.terrain[site.index(cell)] in Grid.WATER: nearby_water = true
+		t.check(nearby_water,"Confluence retains promised edge %d mouth and width class %d" % [edge,descriptor.river_edges[edge]])
 

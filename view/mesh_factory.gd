@@ -2,6 +2,8 @@ extends RefCounted
 ## Simple vertex-coloured meshes using the imported environment's lighting.
 const WORLD_MATERIAL = preload("res://render/world.gdshader")
 const MedievalBuildings = preload("res://view/medieval_buildings.gd")
+const GridChanges = preload("res://view/grid_changes.gd")
+const CONTEXT_NEIGHBOURS := [Vector2i.ZERO,Vector2i.LEFT,Vector2i.RIGHT,Vector2i.UP,Vector2i.DOWN]
 var medieval: MedievalBuildings
 var material := ShaderMaterial.new()
 var mesh_cache: Dictionary = {}
@@ -19,6 +21,16 @@ var forest_cover_cache: Dictionary = {}
 var context_grid
 var context_revision := -1
 var context_forest_revision := -1
+var context_image: Image
+var context_texture: ImageTexture
+var context_changes := GridChanges.new()
+## Recolouring the ground after a felling or planting only revisits nearby
+## vertices: each top-face vertex is listed under the cell its colour samples.
+var forest_ground_changes := GridChanges.new()
+var ground_mesh: Mesh
+var ground_arrays: Array = []
+var ground_vertex_cells: Array[Dictionary] = []
+var district_ground := {"tundra":Color("a0b2a8"), "marsh":Color("557e68"), "coast":Color("b9af77"), "mountain_pass":Color("818b76"), "highland_hills":Color("82965e")}
 
 func _init(art_settings: Resource = null) -> void:
 	if art_settings != null: art = art_settings
@@ -177,6 +189,10 @@ func terrain(parent: Node3D, grid) -> void:
 	mesh.material_override = ground_material
 	parent.add_child(mesh)
 	terrain_node = mesh
+	# Later forest changes recolour only around themselves, relative to this grid.
+	forest_ground_changes = GridChanges.new()
+	forest_ground_changes.update(grid)
+	ground_mesh = null
 	sync_ground_context(grid)
 	# The relief mesh supplies masked outer walls. Legacy square fixtures retain
 	# their historical soil base; generated hexes never show a rectangular slab.
@@ -197,6 +213,11 @@ func forest_cover(grid, point: Vector2) -> float:
 func ground_colour(grid, point: Vector2) -> Color:
 	var patch := clampf(patch_noise.get_noise_2dv(point)*1.6+0.5,0.0,1.0)
 	var base: Color = art.grass_shade.lerp(art.grass_sun, lerpf(0.5,patch,art.terrain_variation))
+	var cell := Vector2i(point.floor())
+	if grid.hex_width > 0.0 and grid.inside(cell):
+		var owner: Vector2i = grid.owner_coords[cell.y * grid.width + cell.x]
+		var district: Dictionary = grid.districts.get("%d,%d" % [owner.x,owner.y], {})
+		if district_ground.has(district.get("biome", "")): base = base.lerp(district_ground[district.biome],0.24)
 	return base.lerp(art.forest_floor, forest_cover(grid,point)*art.forest_darkness)
 
 func detail_cell(grid, cell: Vector2i) -> bool:
@@ -212,54 +233,114 @@ func detail_cell(grid, cell: Vector2i) -> bool:
 func sync_ground_context(grid) -> void:
 	if context_grid == grid and context_revision == grid.revision and context_forest_revision == grid.forest_revision: return
 	forest_cover_cache.clear()
+	var changed := context_changes.update(grid)
+	var rebuild: bool = context_changes.reset or context_grid != grid or context_image == null
 	context_grid = grid
 	context_revision = grid.revision
 	context_forest_revision = grid.forest_revision
-	var image := Image.create(grid.width*4,grid.height*4,false,Image.FORMAT_RGBA8)
-	ground_material.set_shader_parameter("ground_world_size",Vector2(grid.width,grid.height))
 	# Quarter-tile contact masks embed roads/buildings into the original ground.
-	for y in image.get_height():
-		for x in image.get_width():
-			var point := Vector2((x+0.5)/4.0,(y+0.5)/4.0)
-			var cell := Vector2i(point.floor())
-			if not grid.inside(cell):
-				image.set_pixel(x,y,Color(0,0,0,0))
-				continue
+	# A change reaches two cells away: forest cover samples a 5x5 neighbourhood.
+	if not rebuild:
+		for cell in GridChanges.around(changed,2,grid):
+			_paint_context(grid,cell)
+		if not changed.is_empty(): context_texture.update(context_image)
+		return
+	context_image = Image.create(grid.width*4,grid.height*4,false,Image.FORMAT_RGBA8)
+	for y in grid.height:
+		for x in grid.width:
+			_paint_context(grid,Vector2i(x,y))
+	context_texture = ImageTexture.create_from_image(context_image)
+	ground_material.set_shader_parameter("ground_world_size",Vector2(grid.width,grid.height))
+	ground_material.set_shader_parameter("ground_context",context_texture)
+
+## The 4x4 context texels of one cell.
+func _paint_context(grid, cell: Vector2i) -> void:
+	var corner := cell*4
+	if not grid.inside(cell):
+		context_image.fill_rect(Rect2i(corner,Vector2i(4,4)),Color(0,0,0,0))
+		return
+	var water: bool = grid.is_water(cell)
+	var near_works := false
+	var shore := false
+	for direction in CONTEXT_NEIGHBOURS:
+		var nearby: Vector2i = cell+direction
+		if grid.occupied.has(nearby) or grid.roads.has(nearby): near_works = true
+		if water and not grid.is_water(nearby) and grid.inside(nearby): shore = true
+	var detail := 1.0 if detail_cell(grid,cell) and not grid.occupied.has(cell) and not grid.roads.has(cell) else 0.0
+	if not near_works and not shore:
+		# Nothing nearby varies across the tile, so its texels share one value.
+		context_image.fill_rect(Rect2i(corner,Vector2i(4,4)),Color(0,0,0.0 if water else forest_cover(grid,Vector2(cell)),detail))
+		return
+	for y in 4:
+		for x in 4:
+			var point := Vector2((corner.x+x+0.5)/4.0,(corner.y+y+0.5)/4.0)
 			var edge := 0.0
 			var contact := 0.0
 			var shoreline := 0.0
-			for direction in [Vector2i.ZERO,Vector2i.LEFT,Vector2i.RIGHT,Vector2i.UP,Vector2i.DOWN]:
+			for direction in CONTEXT_NEIGHBOURS:
 				var nearby: Vector2i = cell+direction
-				if grid.is_water(cell) and not grid.is_water(nearby) and grid.inside(nearby):
+				if water and not grid.is_water(nearby) and grid.inside(nearby):
 					var shore_distance := (point-point.clamp(Vector2(nearby),Vector2(nearby)+Vector2.ONE)).length()
 					shoreline = maxf(shoreline,1.0-smoothstep(0.0,0.30,shore_distance))
 				if not grid.occupied.has(nearby) and not grid.roads.has(nearby): continue
 				var distance_to_rect := (point-point.clamp(Vector2(nearby),Vector2(nearby)+Vector2.ONE)).length()
 				edge = maxf(edge,1.0-smoothstep(0.0,0.65,distance_to_rect))
 				if grid.occupied.has(nearby): contact = maxf(contact,1.0-smoothstep(0.0,0.24,distance_to_rect))
-			var detail := 1.0 if detail_cell(grid,cell) and not grid.occupied.has(cell) and not grid.roads.has(cell) else 0.0
-			image.set_pixel(x,y,Color(contact,edge,shoreline if grid.is_water(cell) else forest_cover(grid,point),detail))
-	ground_material.set_shader_parameter("ground_context",ImageTexture.create_from_image(image))
+			context_image.set_pixel(corner.x+x,corner.y+y,Color(contact,edge,shoreline if water else forest_cover(grid,point),detail))
 
 func sync_forest_ground(grid) -> void:
 	forest_cover_cache.clear()
 	if not is_instance_valid(terrain_node): return
+	var changed := forest_ground_changes.update(grid)
 	# Recolour the existing relief geometry; retain heights, faces and water flags.
+	# terrain() coloured it for the grid it recorded, so only tiles whose corner
+	# colours read changed forest cover need repainting: cover samples 5x5 cells
+	# around a corner, and a tile's corners reach one cell further.
+	if ground_mesh != terrain_node.mesh: _index_ground_vertices()
+	var cells: Array = []
+	if forest_ground_changes.reset:
+		for by_cell in ground_vertex_cells: cells.append_array(by_cell.keys())
+	else:
+		cells = GridChanges.around(changed,3,grid)
+	var colour_at := {}
 	var mesh := ArrayMesh.new()
+	for surface in ground_arrays.size():
+		var arrays: Array = ground_arrays[surface]
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var colours: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+		var by_cell: Dictionary = ground_vertex_cells[surface]
+		for cell in cells:
+			if not by_cell.has(cell) or grid.terrain_at(cell) not in ["grass","forest"]: continue
+			for index in by_cell[cell]:
+				var point := Vector2(vertices[index].x,vertices[index].z)
+				if not colour_at.has(point): colour_at[point] = ground_colour(grid,point).srgb_to_linear()
+				colours[index] = colour_at[point]
+		arrays[Mesh.ARRAY_COLOR] = colours
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
+	terrain_node.mesh = mesh
+	ground_mesh = mesh
+	sync_ground_context(grid)
+
+## Lists the land top-face vertices of the terrain mesh under the tile their
+## triangle belongs to, which is the tile terrain() coloured them for.
+func _index_ground_vertices() -> void:
+	ground_arrays.clear()
+	ground_vertex_cells.clear()
 	for surface in terrain_node.mesh.get_surface_count():
 		var arrays: Array = terrain_node.mesh.surface_get_arrays(surface)
 		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
 		var flags: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
-		var colours: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
-		for index in vertices.size():
-			var point := Vector2(vertices[index].x,vertices[index].z)
-			if normals[index].y > 0.5 and (flags.is_empty() or flags[index].x < 0.5) and grid.terrain_at(Vector2i(point.floor())) in ["grass","forest"]:
-				colours[index] = ground_colour(grid,point).srgb_to_linear()
-		arrays[Mesh.ARRAY_COLOR] = colours
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,arrays)
-	terrain_node.mesh = mesh
-	sync_ground_context(grid)
+		var by_cell := {}
+		for first in range(0,vertices.size()-2,3):
+			var centroid := (vertices[first]+vertices[first+1]+vertices[first+2])/3.0
+			var cell := Vector2i(floori(centroid.x),floori(centroid.z))
+			for index in range(first,first+3):
+				if normals[index].y <= 0.5 or (not flags.is_empty() and flags[index].x >= 0.5): continue
+				if not by_cell.has(cell): by_cell[cell] = []
+				by_cell[cell].append(index)
+		ground_arrays.append(arrays)
+		ground_vertex_cells.append(by_cell)
 
 func road(parent: Node3D, cell: Vector2i, grid) -> void:
 	var at := Vector3(cell.x+0.5,0.018,cell.y+0.5)

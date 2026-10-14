@@ -2,11 +2,11 @@
 
 > **Goal:** a hex world map that is the game's home screen. You start a campaign on it, choose where each village goes, return to it between runs, and see every village you have founded, chartered or lost.
 
-**Status:** plan, 11 Oct 2026. This replaces the zoom and seamless-terrain design in [WORLD_MAP.md](WORLD_MAP.md). The hexes, village reach, spacing, biomes and scouting rules carry over. The seamless zoom transition and identical terrain meshes between scales remain out of scope; village sites must reflect their world tile's terrain layout and river placement as recorded below.
+**Status:** phases A through E implemented for the current prototype, 11 October 2026, with a follow-up art pass. The latest implementation and review captures are in [Hex villages and campaign runs](HEX_VILLAGES.md). This supersedes the seamless-zoom design in [WORLD_MAP.md](WORLD_MAP.md). Sites preserve their world tile's major terrain layout and river placement; identical meshes and seamless zoom remain out of scope.
 
-### Next session: hex-shaped village sites (12 October 2026)
+### Hex-shaped village sites: implemented
 
-Agreed on 11 October: change the village map to a **hex-shaped visible and playable footprint**, and generate it from the selected world-map tile's terrain. Pick this up next session; this entry records the work, without starting implementation.
+Agreed on 11 October: change the village map to a **hex-shaped visible and playable footprint**, and generate it from the selected world-map tile's terrain. This work is now implemented: a regular hex boundary clips the rectangular backing grid, with terrain generated from the founding tile and its six neighbours. The notes below record the agreed requirements.
 
 - Carry the selected tile's biome, major relief, woodland/clearings, coastline and lakes into the village site, preserving their overall arrangement and orientation. Replace the generic starter terrain with a site that visibly belongs to the chosen tile.
 - Match **river placement**, including entry/exit edges, positions along those edges, width, connections, confluences and lake/coast destinations. Fine-scale meanders may add detail while retaining the map's watercourse layout.
@@ -38,10 +38,11 @@ What already exists and is reused:
 - **Hex maths.** `sim/world/hex_math.gd`: pointy-top axial hexes, point-to-hex, distance, neighbours.
 - **Terraces test site** (F4 / `--site=terraces`). It stays as a debug fixture for relief.
 
-What is missing:
-- **Any persistence.** Snapshots support comparison and replay, not restoring a run. A world map you return to needs a campaign save. Resuming an unfinished village needs a village save (§6).
-- **Run endings.** There is no charter or failure yet (Tier 3 does not exist). The map needs a "run result" contract now, so the result can be filled in by real charter and failure rules later (§7).
-- **Scene flow.** `village_view.tscn` is the main scene, and nothing sits above it.
+What is now implemented:
+- **Hex site generation:** deterministic regular hex footprints, shared river/lake/coast/grove/relief layout, real-command starter validation and cached playability checks.
+- **Persistence:** complete simulation/site restoration, versioned atomic campaign saves, corruption rejection and compatible v1 migration.
+- **Campaign flow:** main menu, map selection and village history, founding, suspend/resume, two-minute autosave, saved camera/weather settings, charter/keep-building and confirmed abandonment.
+- **Run results:** persistent charter/ruin/abandon records, scouting, spacing, three-run continuation and ruin resettlement with 12 extra logs. The zero-population ruin hook exists; natural population loss is not introduced by this plan because the prototype retains four founding adults.
 
 ---
 
@@ -134,11 +135,11 @@ VillageRecord
 
 ## 5. Site generation from a hex
 
-`SiteGen.generate(world, hex) -> SitePackage`. Sites no longer have to match a world function exactly. They only have to **honour what the hex promised**.
+`SiteGen.generate(world, hex) -> SitePackage`. Sites **honour what the hex promised** through the authoritative `terrain_layout.gd`, shared with the world-map renderer. River paths, edge mouths, water widths, linked lakes, groves and ridge fields are sampled at both scales; village relief is quantized into traversable levels and ramps.
 
 ### 5.1 Layout
 
-**Next-session update:** use a hex-shaped site footprint and preserve the selected tile's major terrain layout and river placement. Resolve the dimensions and neighbour reach using the note above before implementing this section's earlier square-layout proposal.
+**Implemented layout:** square command cells inside a regular hex-shaped physical footprint. Buildings, roads, routing, planting and terrain rendering all respect the mask.
 
 The site is 60×60 tiles, covering the founding hex plus its six neighbours, each 20 tiles wide (as in phase 1). Each tile knows which of the seven hexes it is in. That hex's descriptor drives the tile, so the site is assembled from seven pieces of the map.
 
@@ -161,25 +162,22 @@ Neighbouring villages are at least 4 hexes apart, so no two sites ever overlap. 
 
 Every settleable hex must pass:
 - at least 250 buildable tiles connected by possible roads inside the founding hex, plus at least 800 across the reach;
-- a founding spot with water within 8 tiles;
+- a founding spot with water within 8 tiles when its founding tile promises river, lake or coastal water; dry sites retain the prototype well;
 - harsh biomes: the rare deposit sits inside the reach.
 
-The check runs during world generation (a quick pass per hex). A hex that fails is marked *too rugged* and cannot be founded. Generated terrain is never quietly changed to make it pass.
+Detailed playability is checked when a site is selected and before founding, then cached on the world. This keeps world generation fast instead of generating all 300 fine sites upfront. A failed site is labelled *too rugged* and cannot be founded. Meadow openings belong to the shared world layout before sampling; failed terrain is never flattened and rivers are never moved to fit the starter. The real starter commands also verify material and treasury budgets.
 
 ---
 
 ## 6. Persistence
 
-| What | Where | Contents |
-| --- | --- | --- |
-| Campaign | `user://campaigns/<id>/campaign.json` | §4.4 |
-| Active village | `user://campaigns/<id>/villages/<village>.json` | The village's full sim state, the site (or the hex to regenerate it from), the camera and the view settings |
+Campaigns use `user://campaigns/<id>.campaign`, one atomic file containing campaign records, scouting, results, the active village's complete simulation and site, and map/village view settings. Object-free binary Variants preserve typed arrays and integer/vector keys; this replaces the proposed split JSON files.
 
-- **Village save means real restore.** Add `VillageSim.from_snapshot(snapshot, content)`, the inverse of `snapshot()`, with `Building`, `Carrier` and `Storage` restored from their snapshot dictionaries. Snapshots already copy all authoritative state, including RNG, reservations and routes, so this is mostly deserialisation.
-- **Test for it:** run a village, snapshot, restore, then step both copies the same number of ticks. Their snapshots must be identical. This extends the existing determinism test.
-- **Save timing:** on returning to the map, on quitting, and every 2 minutes during a run. Write to a temporary file and rename, so a crash never leaves a half-written save.
-- **Versioning:** both files carry a `version`. Older versions are migrated or refused with a clear message, never loaded wrongly.
-- **Alternative considered:** a command log with deterministic replay. It is cheaper to write, but loading slows as runs get longer (a 90-minute run is 54,000 ticks), and every sim change breaks old logs. Restoring from snapshot is the better long-term base.
+- `VillageSim.from_snapshot(snapshot, content)` and building/carrier/storage inverse methods restore the complete run, including jobs, cargo, reservations, finances, forestry, RNG and masked site metadata.
+- Save on founding, map/menu transitions, normal quit and every two minutes. A temporary write plus checksum envelope and rename protects the previous save; failed completion rolls back the run transition and keeps the scene open.
+- **Save version 2:** compatible v1 saves migrate, retaining their original square sites. Wrong game data or generator versions are refused with a clear message. The world generator is now version 2 to reject old resource promises incompatible with actual water/coasts.
+- Camera, selection, linked-art mode, time/weather/wind, rendering mode, pause/speed and deposit display are restored. Malformed saved view data is rejected before entering the scene.
+- Tests cover deterministic continued simulation after restore, real cargo-return jobs and demolished delivery endpoints, full hex-site round trips, atomic failures, corruption and migration.
 
 ---
 
@@ -196,8 +194,8 @@ RunResult
 
 Until charter and failure rules exist:
 - **Charter:** shown once the village reaches its current highest tier. The result card offers "Charter village" (the hex becomes chartered and the run ends) or "Keep building".
-- **Ruin:** shown when the village's population reaches 0. It becomes a ruin that can later be resettled (DESIGN.md pillar 3).
-- **Abandon:** from the options menu, with a confirmation. The hex becomes a ruin.
+- **Ruin:** the zero-population hook produces a resettleable ruin. Natural mortality is not yet simulated: the current four founding adults prevent normal runs from reaching zero. Explicit abandonment already provides the playable ruin/resettlement route.
+- **Abandon:** from the options menu, with a confirmation. The record becomes abandoned and the map shows a ruin marker. Resettling grants 12 recorded extra starting logs; other settlements' spacing still applies.
 
 The real rules (Tier 3, export depot, morale, raids) replace these triggers later without changing `RunResult` or the map.
 
@@ -205,13 +203,13 @@ The real rules (Tier 3, export depot, morale, raids) replace these triggers late
 
 ## 8. World map screen (`view/world_map/`)
 
-- **Rendering:** the same pixel viewport, camera rig, lighting and atmosphere as the village, so the map matches its art.
+- **Rendering:** the same smooth full-resolution viewport, camera rig, lighting and atmosphere as the village, so the map matches its art.
   - Each hex is a low prism raised by its elevation band and coloured by biome.
   - Rivers are ribbons through hex centres and edge midpoints.
-  - Ocean is a flat plane. Forests are a few instanced trees per forested hex; peaks are rock prisms.
-  - The hex grid is drawn faintly in the ground shader.
+  - Ocean is a flat plane with local shores. Imported nature models form groves; broad ridge relief and restrained snow define peaks.
+  - Fine dark surface borders keep hexes readable beneath the linked scenery.
 - **Village hex markers:**
-  - *active*: a few roofs with a banner;
+  - *active*: a few roofs with a red banner;
   - *chartered*: a larger cluster with a coloured banner, later the faction colour;
   - *ruin*: grey broken walls;
   - *abandoned*: the ruin marker, dimmer.
@@ -224,7 +222,7 @@ The real rules (Tier 3, export depot, morale, raids) replace these triggers late
 - **Village list:** name, status, best tier, population and founded turn. Clicking centres the map on the village. Active villages have **Resume**.
 - **Debug keys:** reveal all deposits; show settleability; regenerate with the next seed; print the hovered hex's descriptor.
 
-The village view gets a **World map** button in its options menu and a run-result card. Its existing controls stay unchanged.
+The village view has a **World map** button, run-result cards, confirmed abandonment and **Site overview (Home)**. Its existing building, road, camera and weather controls remain available.
 
 ---
 
@@ -249,7 +247,7 @@ The village view gets a **World map** button in its options menu and a run-resul
 - Elevation bands come from measured quantiles.
 
 ### Phase A2: render the world map ✅ (11 Oct 2026)
-- [x] `view/world_map/world_map_view.tscn` with the village's camera rig, lighting and atmosphere, rendered **smooth at full resolution** (the pixel effect is being retired). It runs on its own: `godot --path . view/world_map/world_map_view.tscn -- --seed=N`. The village stays the main scene until phase D.
+- [x] `view/world_map/world_map_view.tscn` with the village's camera rig, lighting and atmosphere, rendered **smooth at full resolution** (the optional pixel effect has since been removed). It runs on its own: `godot --path . view/world_map/world_map_view.tscn -- --seed=N`. The main menu now hosts this scene as the campaign map.
 - [x] `view/world_map/world_map_mesh.gd` draws:
   - hex prisms raised by elevation band and coloured by biome, with darkened rims that read as the hex grid;
   - an ocean plane with lighter coastal shallows;
@@ -257,55 +255,49 @@ The village view gets a **World map** button in its options menu and a run-resul
   - lakes, low-poly forests (conifers in the cold), snow-capped peaks, rocky passes and a start banner.
 - [x] Hover ring and a hex panel: biome and difficulty, elevation, wildness, features, climate, known deposits, **Unscouted**, the start region, and whether the hex can be founded (with the reason if not). Hover follows mouse-motion events and re-picks as the camera moves. Picking marches the camera ray onto prism tops.
 - [x] Debug keys: N / Shift+N for next / previous seed, V to reveal all deposits. `--screenshot` saves `artifacts/world-map.png` and quits.
-- [x] View test: `godot --path . --script tests/run_world_map_tests.gd` (19 checks).
+- [x] View test: `godot --path . --script tests/run_world_map_tests.gd` (124 checks, with follow-up motion, linked-edge and interaction coverage).
   - Models for 3 seeds; every land hex has a prism; changing seed replaces the model.
   - Hover picks the start, a raised hex and a sea hex.
   - Panel contents, Unscouted and the reveal key, camera rotation, next seed.
 
-### Phase B: site generation from a hex (3–4 days)
-- [ ] Next session: hex-shaped village footprint and terrain/river layout matching the selected world tile (12 October note above).
-- [ ] `sim/world/site_gen.gd` (§5.1), reusing the existing site package, relief and hex maths.
-- [ ] A playability check (§5.3) used by both world generation and site generation.
-- [ ] Economy (sim/economy.gd): placement also needs treasury headroom ("Treasury needs …"; 10 g at the start) for logs taken from storehouses plus each new building's working money. The starter layout and any site-specific founding layout must fit that budget, and the playability check should place the starter through the real sim commands.
-- [ ] Extend `dump_world.gd` to write `artifacts/site-<seed>-<q>-<r>.png` next to the hex and its neighbours.
-- [ ] Tests:
-  - every promised river, coast, lake and cliff appears in its part of the site;
-  - deposits fall in their own hex and on valid terrain;
-  - the founding hex is buildable;
-  - the starter layout succeeds at the founding spot and bakes bread on 20 random settleable hexes across 3 seeds.
+### Phase B: site generation from a hex — complete
+- [x] Shared `terrain_layout.gd` and `site_gen.gd`: regular hex footprint, seven owner districts, rivers/coasts/lakes, groves, terrain bands, ramps and deposits.
+- [x] Physical mask enforced by rendering, placement, roads, routing and forestry; square command cells retained.
+- [x] Cached site-selection/founding playability and real-command starter checks, including the existing treasury/material budget.
+- [x] Paired `dump_world.gd` PNGs, including `--site=q,r` and `--lake` fixtures.
+- [x] **294 generation checks:** 21 villages bake bread across three seeds; all three starts and actual lake sites are playable; boundary, relief, river mouths, water and deposit ownership match. The final zero-forest-cover change passed **6 targeted fixture checks**.
 
-**Done when:** the paired PNGs read correctly by eye, and the tests pass.
+**Done:** paired layouts and GPU landscapes reviewed; detailed checks run lazily at site selection to preserve fast world generation.
 
-### Phase C: persistence (2–3 days)
-- [ ] `VillageSim.from_snapshot()` plus `from_snapshot` on `Building`, `Carrier` and `Storage`.
-- [ ] `sim/world/campaign.gd` (§4.4), with save and load to JSON, atomic writes and versioning.
-- [ ] Tests:
-  - restoring a snapshot and stepping it matches the original run;
-  - a campaign survives a save/load round trip;
-  - a corrupt or old file is refused with a message.
+### Phase C: persistence — complete
+- [x] Complete `VillageSim`, `Building`, `Carrier` and `Storage` snapshot inverse methods.
+- [x] `sim/campaign.gd`: atomic checksum-protected Variant saves, version 2, compatible v1 migration and schema validation (§6).
+- [x] Full state, cargo/delivery interruption, finances, forestry, site geometry, view state and RNG restored.
+- [x] **170 targeted campaign checks:** deterministic continuation, corrupted/malformed saves, migration, complete generated sites, maximum overview zoom, failed completion rollback and aggregate road-budget atomicity.
 
-**Done when:** a scripted run can be saved, reloaded and continued identically, headless.
+**Done:** a saved run restores and continues identically, including deliveries interrupted by demolition.
 
-### Phase D: world map screen (4–5 days)
-- [ ] `view/world_map/world_map_view.tscn` becomes the new main scene, plus a small title menu (New campaign / Continue).
-- [ ] Hex mesh, rivers, ocean, forests, markers and the hex grid (§8).
-- [ ] Hover, hex panel, founding overlay, found card, village list.
-- [ ] Scene switching between map and village: suspend, save and resume. The village gets a **World map** option.
-- [ ] View tests:
-  - real mouse input founds a village on a chosen hex and opens it;
-  - returning to the map shows the active marker;
-  - resuming restores the same tick and buildings.
+### Phase D: world map screen — complete
+- [x] `view/main_menu.tscn` is the main scene, hosting New/Load campaign, the world map and the village.
+- [x] Art-directed hex landscapes, water, latest village status markers, grid outlines and seven-hex reach.
+- [x] Hover details, site validation, blocked founding hatches, village list, known reach deposits and named founding controls.
+- [x] Suspend/save/resume, independent active-village resume, and per-view camera/weather/wind/pause/render settings.
+- [x] **47 rendered campaign checks:** real mouse/keyboard flow, save failures, 960×640 layout, Site overview/Home framing and restoration, history and status actions. Existing village view checks also pass.
 
-**Done when:** a player can start a campaign, found a village, leave, resume, and see it on the map.
+**Done:** players can create/load a campaign, choose a valid site, found, leave and resume their village.
 
-### Phase E: run results and campaign loop (2 days)
-- [ ] `RunResult`, interim charter, ruin and abandon triggers (§7), the result card and map updates.
-- [ ] Scouting after a run (§4.3). Ruins can be resettled.
-- [ ] Test: three villages in a row on one campaign, with markers, spacing and scouting all correct after each run.
+### Phase E: run results and campaign loop — prototype complete
+- [x] `RunResult`, temporary charter at the highest implemented tier, Keep building, confirmed abandonment, zero-population ruin hook, result cards and map updates.
+- [x] Scouting, minimum spacing, latest status markers, persistent history and ruin resettlement with 12 extra logs.
+- [x] Three distinct completed runs followed by resettlement tested headlessly; rendered flow also tests successive charter/abandon/resettle runs, save/load and rollback.
 
-**Done when:** the week 12 gate's "3 runs in a row" can be played on the map, without the nation-turn systems.
+**Done for the prototype:** repeated village runs work without nation-turn mechanics. Natural population-loss ruins await a mortality system; Tier 3, faction/export charter rules and nation turns remain their separate later milestones.
 
-Phases A, B and C are headless and can run in parallel with the current village work. A2 adds a standalone map scene without touching the village view. Phase D builds the interaction (founding, village list, scene switching) on A2's renderer.
+### Follow-up art pass — complete
+- [x] Shared world/village terrain fields, village palette and golden light, regional woodland species and quiet meadow patches.
+- [x] Generated foliage root offsets break regular rows while retaining resource cells; regrowth/stumps share the same placement.
+- [x] Clipped soil sides, full-site camera framing and a calm weather-aware overview backdrop with live cloud lighting and wind.
+- [x] **33 generated-site GPU checks:** no exterior terrain/foliage leaks, art leaves simulation/RNG unchanged, and saved regional metadata survives restoration. Overview/close-up captures for three seeds are in [HEX_VILLAGES.md](HEX_VILLAGES.md).
 
 ---
 
@@ -320,11 +312,11 @@ Phases A, B and C are headless and can run in parallel with the current village 
 
 ---
 
-## 11. Open questions
+## 11. Prototype decisions and remaining questions
 
-1. **More than one active village?** One at a time matches DESIGN.md's "one village per session", and keeps saves and the UI simple. Several in-progress villages would allow switching between them, at the cost of more saves and a busier list.
+1. **Active villages:** one at a time, matching DESIGN.md's "one village per session". Completed and abandoned runs remain in history.
 2. **Culture at founding.** Is the culture chosen on the found card from the start, or added once cultures have gameplay? The card has room for it either way.
-3. **World size.** 480 hexes (24×20) was sized for the village spacing. As a level select, a smaller world (about 300) may read better on screen and still hold 12+ villages. Proposed: start at 300 and tune.
+3. **World size:** 300 hexes (20×15), with later tuning based on campaign play.
 4. **Rumours.** Should unscouted hexes hint at hidden deposits, or stay silent?
-5. **Spill timing.** Is the whole reach buildable from the start, or do neighbour hexes open up as the village grows?
-6. **Resettling ruins.** What bonus does a ruin give (DESIGN.md "resettled later with a bonus"): starting logs, standing foundations, or scouted surroundings?
+5. **Spill timing:** the whole physical site is available from the start, subject to terrain and building rules.
+6. **Resettling ruins:** 12 extra starting logs, with the predecessor recorded in campaign history.

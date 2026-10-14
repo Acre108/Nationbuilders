@@ -28,11 +28,24 @@ var reserve = Storage.new(300)
 var tick := 0
 var unlocked_tier := 1
 var idle_workers := 0
-## Silver. The treasury is the player's; the payroll waits for payday.
+## Silver. The treasury is the player's; the payroll waits for payday. The two
+## reserves are parts of the treasury the player has set aside: public pay
+## draws on its reserve first and construction on the capital reserve, and
+## neither touches the other's.
 var treasury := Economy.FOUNDING_TREASURY
+var public_reserve := 0
+var capital_reserve := 0
 var payroll := 0
 var tax_percent := Economy.DEFAULT_TAX_PERCENT
+## Storehouses charge households this much above the chain price.
+var markup_percent := Economy.DEFAULT_MARKUP_PERCENT
 var taxes_collected := 0
+## Worker-paydays public workers went unpaid, village-wide. Kept for the trade
+## union's contentedness once factions exist.
+var public_frustration := 0
+## Treasury income and spending since the last payday, then per payday.
+var period: Dictionary = Economy.blank_period()
+var ledger: Array = []
 var next_uid := 1
 var next_carrier_uid := 1
 var produced: Dictionary = {}
@@ -41,6 +54,18 @@ var destroyed: Dictionary = {}
 var events: Array[String] = []
 var last_error := ""
 var valid := false
+## Derived from carriers' jobs and rebuilt when they change; see _reserved().
+var _jobs_dirty := true
+var _jobs_version := 0
+var _incoming: Dictionary = {}
+var _outgoing: Dictionary = {}
+var _jobs_to: Dictionary = {}
+## Job searches that found nothing since jobs last changed, by home storehouse
+## and road network. Repeating one would find nothing again.
+var _idle_misses: Dictionary = {}
+var _idle_misses_version := -1
+## Forestry buildings whose last search found no site; see forestry.gd.
+var _forestry_misses: Dictionary = {}
 
 ## Without a site package the run uses the default 100x100 coastal village.
 func _init(seed_value: int = 73, content = null, site_package = null) -> void:
@@ -90,9 +115,13 @@ func placement_error(building_id: String, cell: Vector2i, rotation_quarters: int
 		if stock(good) < int(row.cost[good]):
 			return "Need %d %s" % [int(row.cost[good]), good]
 	var price_due: int = economy.construction_price(self, row)
-	if treasury < price_due:
-		return "Treasury needs " + Economy.format(price_due)
+	if Economy.construction_funds(self) < price_due:
+		return _treasury_shortfall(price_due)
 	return ""
+
+## Construction cannot use the public pay reserve, so say when that is why.
+func _treasury_shortfall(price_due: int) -> String:
+	return "Treasury needs " + Economy.format(price_due) + ("" if public_reserve == 0 or treasury < price_due else " outside the public pay reserve")
 
 func place(building_id: String, cell: Vector2i, rotation_quarters: int = 0) -> bool:
 	if building_id == "road":
@@ -106,7 +135,7 @@ func place(building_id: String, cell: Vector2i, rotation_quarters: int = 0) -> b
 	var building = Building.new(next_uid, row, cell, rotation_quarters)
 	# The treasury gives the new building its working money.
 	building.silver = capital
-	treasury -= capital
+	Economy.spend_on_construction(self, capital)
 	next_uid += 1
 	buildings[building.uid] = building
 	for tile in building.cells():
@@ -152,6 +181,12 @@ func place_road(cells: Array) -> bool:
 		if stock(good) < cost[good]:
 			last_error = "Not enough " + good
 			return false
+	# Validate the whole stroke before paying or clearing any tree. Checking
+	# individual cells alone cannot reserve the same silver for every road.
+	var price_due: int = economy.materials_price(self,cost)
+	if Economy.construction_funds(self) < price_due:
+		last_error = _treasury_shortfall(price_due)
+		return false
 	_pay(cost)
 	for tile in unique:
 		grid.roads[tile] = true
@@ -179,7 +214,7 @@ func demolish(cell: Vector2i) -> bool:
 		for good in storage.items:
 			destroyed[good] = int(destroyed.get(good, 0)) + storage.count(good)
 	# A demolished building's silver returns to the treasury.
-	treasury += building.silver
+	Economy.refund(self, building.silver)
 	for tile in building.cells():
 		grid.occupied.erase(tile)
 	buildings.erase(building.uid)
@@ -188,6 +223,7 @@ func demolish(cell: Vector2i) -> bool:
 			if not carrier.cargo.is_empty():
 				destroyed[carrier.cargo] = int(destroyed.get(carrier.cargo, 0)) + 1
 			carriers.erase(carrier)
+	_jobs_changed()
 	grid.changed()
 	return true
 
@@ -210,6 +246,8 @@ func step(ticks: int = 1) -> void:
 		return
 	for iteration in maxi(ticks, 0):
 		tick += 1
+		# Rebuild derived reservations once per tick, in case a caller edited carriers.
+		_jobs_changed()
 		grid.grow_trees(tick)
 		var workers := workforce()
 		for building in buildings.values():
@@ -233,15 +271,45 @@ func step(ticks: int = 1) -> void:
 ## Sets the share of household wages taken into the treasury at payday.
 func set_tax_percent(percent: int) -> bool:
 	last_error = ""
-	if percent < 0 or percent > 100:
-		last_error = "Tax must be between 0 and 100 percent"
+	if percent < 0 or percent > Economy.MAX_TAX_PERCENT:
+		last_error = "Tax must be between 0 and %d percent" % Economy.MAX_TAX_PERCENT
 		return false
 	tax_percent = percent
+	return true
+
+## Sets how much above the chain price storehouses charge households.
+func set_markup_percent(percent: int) -> bool:
+	last_error = ""
+	if percent < 0 or percent > Economy.MAX_MARKUP_PERCENT:
+		last_error = "Markup must be between 0 and %d percent" % Economy.MAX_MARKUP_PERCENT
+		return false
+	markup_percent = percent
+	return true
+
+## Moves up to `amount` silver of free treasury gold into a reserve ("public"
+## or "capital"); a negative amount moves it back. Fails only if nothing moves.
+func transfer_reserve(pot: String, amount: int) -> bool:
+	last_error = ""
+	if pot not in ["public","capital"]:
+		last_error = "Unknown reserve: " + pot
+		return false
+	var key := pot + "_reserve"
+	var held: int = get(key)
+	var moved := mini(amount, Economy.free_gold(self)) if amount > 0 else -mini(-amount, held)
+	if moved == 0:
+		last_error = "No free gold to set aside" if amount > 0 else "Nothing in that reserve"
+		return false
+	set(key, held + moved)
 	return true
 
 ## Unit price in silver.
 func price(good: String) -> int:
 	return int(economy.prices.get(good, 0))
+
+## What this buyer pays this seller per unit: the chain price, plus the
+## storehouse markup when a household buys from storage.
+func sale_price(buyer, seller, good: String) -> int:
+	return economy.sale_price(self, buyer, seller, good)
 
 func spendable(building) -> int:
 	return economy.spendable(self, building)
@@ -291,8 +359,18 @@ func _update_carrier(carrier) -> void:
 			if entries.is_empty():
 				return
 			carrier.cell = entries[0]
-		carrier.job = _find_job(carrier, home)
-		if carrier.job.is_empty():
+		# Within a tick only carriers change the village, and every change they
+		# make passes through _jobs_changed(), so an unchanged search would fail again.
+		if _idle_misses_version != _jobs_version:
+			_idle_misses.clear()
+			_idle_misses_version = _jobs_version
+		var search := Vector2i(home.uid, grid.network(carrier.cell))
+		var found: Dictionary = {} if _idle_misses.has(search) else _find_job(carrier, home)
+		if not found.is_empty() or not carrier.job.is_empty():
+			_jobs_changed()
+		carrier.job = found
+		if found.is_empty():
+			_idle_misses[search] = true
 			return
 		carrier.stage = "pickup"
 		carrier.route_revision = -1
@@ -326,6 +404,7 @@ func _update_carrier(carrier) -> void:
 		carrier.stage = "delivery"
 		carrier.path.clear()
 		carrier.route_revision = -1
+		_jobs_changed()
 	else:
 		if _slot(target, carrier.job.target_slot).add(good):
 			# The receiver pays the seller on delivery; spendable() reserved the silver.
@@ -334,8 +413,10 @@ func _update_carrier(carrier) -> void:
 			carrier.stage = "idle"
 			carrier.job = {}
 			carrier.path.clear()
+			_jobs_changed()
 
 func _cancel_job(carrier) -> void:
+	_jobs_changed()
 	carrier.path.clear()
 	carrier.route_revision = -1
 	if carrier.cargo.is_empty():
@@ -352,7 +433,7 @@ func _find_job(carrier, home) -> Dictionary:
 	var ordered: Array = rows.slice(offset) + rows.slice(0, offset)
 	# Villagers eat first: house pantries are stocked before workshop inputs.
 	for target in ordered:
-		if target.definition.kind != "house" or grid.route_between(home, target).is_empty():
+		if target.definition.kind != "house" or grid.distance(home, target) < 0:
 			continue
 		for good in db.tiers[target.tier].consumption:
 			if _wants(target, good, _pantry_target(target, good)):
@@ -360,7 +441,7 @@ func _find_job(carrier, home) -> Dictionary:
 				if not job.is_empty():
 					return job
 	for target in ordered:
-		if target.definition.kind != "producer" or not target.workers_enabled or grid.route_between(home, target).is_empty():
+		if target.definition.kind != "producer" or not target.workers_enabled or grid.distance(home, target) < 0:
 			continue
 		for good in target.definition.inputs:
 			if _wants(target, good, input_buffer(target.definition, good)):
@@ -376,6 +457,9 @@ func _find_job(carrier, home) -> Dictionary:
 					if not job.is_empty():
 						return job
 		for good in source.output.items:
+			# Surplus stops at the storehouse's limit; the producer then fills up and waits.
+			if home.inventory.count(good) + _reserved(home.uid, "inventory", good, false) >= int(home.definition.good_limit):
+				continue
 			var job := _try_job(carrier, source, "output", home, "inventory", good)
 			if not job.is_empty():
 				return job
@@ -395,6 +479,8 @@ func _pantry_target(house, good: String) -> int:
 ## a producer's finished output. Equal distances keep the rotated order.
 func _closest_supply_job(carrier, ordered: Array, target, good: String) -> Dictionary:
 	var candidates: Array = []
+	# Nothing changes during a search, so the buyer's budget is read once.
+	var budget: int = spendable(target)
 	for source in ordered:
 		var slot := ""
 		if source.definition.kind == "storehouse":
@@ -403,9 +489,11 @@ func _closest_supply_job(carrier, ordered: Array, target, good: String) -> Dicti
 			slot = "output"
 		if slot.is_empty() or source == target or _slot(source, slot).count(good) - _reserved(source.uid, slot, good, true) < 1:
 			continue
-		var route: Array[Vector2i] = grid.route_between(source, target)
-		if not route.is_empty():
-			candidates.append([route.size(), candidates.size(), source, slot])
+		if budget < sale_price(target, source, good):
+			continue
+		var cells: int = grid.distance(source, target)
+		if cells > 0:
+			candidates.append([cells, candidates.size(), source, slot])
 	candidates.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 	for entry in candidates:
 		var job := _try_job(carrier, entry[2], entry[3], target, "input", good)
@@ -422,21 +510,58 @@ func _try_job(carrier, source, source_slot: String, target, target_slot: String,
 		return {}
 	if destination.total() + _reserved(target.uid, target_slot, "", false) >= destination.capacity:
 		return {}
-	if grid.route_to(carrier.cell, grid.access(source)).is_empty() or grid.route_between(source, target).is_empty():
+	if not grid.reaches(carrier.cell, source) or grid.distance(source, target) < 0:
 		return {}
-	if spendable(target) < price(good):
+	if spendable(target) < sale_price(target, source, good):
 		return {}
 	return {"source":source.uid,"source_slot":source_slot,"target":target.uid,"target_slot":target_slot,"good":good,"seller":source.uid}
 
+## Units promised to (or, for pickups, from) a building slot by live jobs; an
+## empty good counts every good.
 func _reserved(uid: int, slot: String, good: String, outgoing: bool) -> int:
-	var amount := 0
+	if _jobs_dirty:
+		_index_jobs()
+	var slots = (_outgoing if outgoing else _incoming).get(uid)
+	if slots == null or not slots.has(slot):
+		return 0
+	return int(slots[slot].get(good, 0))
+
+## Live jobs delivering to a building, whatever their stage.
+func jobs_to(uid: int) -> Array:
+	if _jobs_dirty:
+		_index_jobs()
+	return _jobs_to.get(uid, [])
+
+## Call whenever a carrier's job or stage changes, or carriers come and go.
+func _jobs_changed() -> void:
+	_jobs_dirty = true
+	_jobs_version += 1
+
+func _index_jobs() -> void:
+	_jobs_dirty = false
+	_incoming.clear()
+	_outgoing.clear()
+	_jobs_to.clear()
 	for carrier in carriers:
-		if carrier.job.is_empty() or (outgoing and carrier.stage != "pickup"):
-			continue
 		var job: Dictionary = carrier.job
-		if job.get("source" if outgoing else "target") == uid and job.get("source_slot" if outgoing else "target_slot") == slot and (good.is_empty() or job.good == good):
-			amount += 1
-	return amount
+		if job.is_empty():
+			continue
+		var target := int(job.target)
+		_count_job(_incoming, target, job.target_slot, job.good)
+		if not _jobs_to.has(target):
+			_jobs_to[target] = []
+		_jobs_to[target].append(job)
+		if carrier.stage == "pickup":
+			_count_job(_outgoing, int(job.source), job.source_slot, job.good)
+
+static func _count_job(index: Dictionary, uid: int, slot: String, good: String) -> void:
+	if not index.has(uid):
+		index[uid] = {}
+	if not index[uid].has(slot):
+		index[uid][slot] = {}
+	var counts: Dictionary = index[uid][slot]
+	counts[good] = int(counts.get(good, 0)) + 1
+	counts[""] = int(counts.get("", 0)) + 1
 
 func _slot(building, slot: String):
 	return building.inventory if slot == "inventory" else (building.input if slot == "input" else building.output)
@@ -447,10 +572,10 @@ func nearest_store(building):
 	for candidate in buildings.values():
 		if candidate.definition.kind != "storehouse":
 			continue
-		var route: Array[Vector2i] = grid.route_between(building, candidate)
-		if not route.is_empty() and route.size() < distance:
+		var cells: int = grid.distance(building, candidate)
+		if cells > 0 and cells < distance:
 			nearest = candidate
-			distance = route.size()
+			distance = cells
 	return nearest
 
 func workforce() -> int:
@@ -478,7 +603,7 @@ func _pay(cost: Dictionary) -> void:
 			building.inventory.take(good, amount)
 			remaining -= amount
 			building.silver += amount * price(good)
-			treasury -= amount * price(good)
+			Economy.spend_on_construction(self, amount * price(good))
 		consumed[good] = int(consumed.get(good, 0)) + int(cost[good])
 
 func snapshot() -> Dictionary:
@@ -491,7 +616,7 @@ func snapshot() -> Dictionary:
 		carrier_states.append(carrier.snapshot())
 	for cell in grid.roads:
 		road_cells.append([cell.x, cell.y])
-	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"payroll":payroll,"tax_percent":tax_percent,"taxes_collected":taxes_collected,"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"site":_site_snapshot()}
+	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"public_reserve":public_reserve,"capital_reserve":capital_reserve,"payroll":payroll,"tax_percent":tax_percent,"markup_percent":markup_percent,"taxes_collected":taxes_collected,"public_frustration":public_frustration,"period":period.duplicate(),"ledger":ledger.duplicate(true),"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"site":_site_snapshot()}
 
 func _site_snapshot() -> Dictionary:
 	var state := {}
@@ -513,7 +638,9 @@ static func from_snapshot(state: Dictionary, content = null):
 	if state.site.size() != fields.size(): return null
 	for key in fields:
 		if not state.site.has(key) or typeof(fields[key]) != typeof(state.site[key]): return null
-		restored_site.set(key, state.site[key])
+		if fields[key] is Array and not fields[key].is_same_typed(state.site[key]): return null
+		var value = state.site[key]
+		restored_site.set(key, value.duplicate(true) if value is Array or value is Dictionary else value)
 	if not restored_site.error().is_empty(): return null
 	var result = load("res://sim/village_sim.gd").new(0, content, restored_site)
 	if not result.valid: return null
@@ -524,9 +651,16 @@ static func from_snapshot(state: Dictionary, content = null):
 		if expected[key] is int:
 			if not Building._whole(state[key]) or (key != "rng" and state[key] < 0): return null
 		elif typeof(state[key]) != typeof(expected[key]): return null
-		if key in ["tick","unlocked_tier","idle_workers","treasury","payroll","tax_percent","taxes_collected","next_uid","next_carrier_uid"]:
+		if key in ["tick","unlocked_tier","idle_workers","treasury","public_reserve","capital_reserve","payroll","tax_percent","markup_percent","taxes_collected","public_frustration","next_uid","next_carrier_uid"]:
 			result.set(key, int(state[key]))
-	if not result.db.tiers.has(result.unlocked_tier) or result.tax_percent > 100: return null
+	if not result.db.tiers.has(result.unlocked_tier) or result.tax_percent > Economy.MAX_TAX_PERCENT or result.markup_percent > Economy.MAX_MARKUP_PERCENT: return null
+	if result.public_reserve + result.capital_reserve > result.treasury: return null
+	if state.ledger.size() > Economy.LEDGER_PAYDAYS or not _valid_period(state.period): return null
+	for entry in state.ledger:
+		if not _valid_period(entry): return null
+	result.period = _whole_period(state.period)
+	for entry in state.ledger:
+		result.ledger.append(_whole_period(entry))
 	if state.width != restored_site.width or state.height != restored_site.height: return null
 	var count: int = state.width * state.height
 	for key in ["terrain","deposits","levels","ramps","reach"]:
@@ -562,6 +696,8 @@ static func from_snapshot(state: Dictionary, content = null):
 		result.grid.set(key, forest)
 	result.reserve = Storage.from_snapshot(state.reserve, 300)
 	if result.reserve == null: return null
+	for good in result.reserve.items:
+		if not result.db.goods.has(good): return null
 	for key in ["produced","consumed","destroyed"]:
 		for good in state[key]:
 			if not result.db.goods.has(good) or not Building._whole(state[key][good]) or state[key][good] < 0: return null
@@ -590,7 +726,12 @@ static func from_snapshot(state: Dictionary, content = null):
 		if not carrier.job.is_empty():
 			for key in ["source","source_slot","target","target_slot","good","seller"]:
 				if not carrier.job.has(key): return null
-			if not result.buildings.has(carrier.job.source) or not result.buildings.has(carrier.job.target) or not result.db.goods.has(carrier.job.good): return null
+			# A demolished endpoint can remain in a live job until its carrier's
+			# next update. Return-to-store jobs deliberately use source = -1.
+			# Preserve these states: _update_carrier resolves them deterministically.
+			for key in ["source","target","seller"]:
+				if not Building._whole(carrier.job[key]): return null
+			if not result.db.goods.has(carrier.job.good): return null
 			if carrier.job.source_slot not in ["input","output","inventory"] or carrier.job.target_slot not in ["input","output","inventory"]: return null
 		carrier_ids[carrier.uid] = true
 		result.carriers.append(carrier)
@@ -600,4 +741,17 @@ func _forest_cells(cells: Dictionary) -> Array:
 	var result: Array = []
 	for cell in cells:
 		result.append([cell.x,cell.y,cells[cell]])
+	return result
+
+## A ledger period holds exactly the economy's ledger keys, as whole silver.
+static func _valid_period(entry) -> bool:
+	if not entry is Dictionary or entry.size() != Economy.LEDGER_KEYS.size(): return false
+	for key in Economy.LEDGER_KEYS:
+		if not Building._whole(entry.get(key)) or entry[key] < 0: return false
+	return true
+
+static func _whole_period(entry: Dictionary) -> Dictionary:
+	var result := {}
+	for key in Economy.LEDGER_KEYS:
+		result[key] = int(entry[key])
 	return result

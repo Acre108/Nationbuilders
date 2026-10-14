@@ -10,6 +10,8 @@ var campaign_name: LineEdit
 var seed_input: LineEdit
 var saves: ItemList
 var paths: Array[String] = []
+var delete_button: Button
+var delete_dialog: ConfirmationDialog
 var status: Label
 var map_status: Label
 var region_text: Label
@@ -122,7 +124,16 @@ func _build_menu() -> void:
 	saves.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	saves.item_activated.connect(func(_index): _load_campaign())
 	load_column.add_child(saves)
-	_button(load_column, "Continue campaign", _load_campaign)
+	var load_actions := HBoxContainer.new()
+	load_actions.add_theme_constant_override("separation", 12)
+	load_column.add_child(load_actions)
+	_button(load_actions, "Continue campaign", _load_campaign).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	delete_button = _button(load_actions, "Delete", _confirm_delete)
+	delete_dialog = ConfirmationDialog.new()
+	delete_dialog.title = "Delete campaign"
+	delete_dialog.ok_button_text = "Delete"
+	delete_dialog.confirmed.connect(_delete_campaign)
+	add_child(delete_dialog)
 	status = _label("Campaigns save when founded, left, and every two minutes during a run.", 14)
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(status)
@@ -138,6 +149,26 @@ func _refresh_saves() -> void:
 			saves.add_item(path.get_file().get_basename() + "  ·  Unavailable")
 			saves.set_item_tooltip(saves.item_count - 1, saved.last_error)
 	if not paths.is_empty(): saves.select(0)
+	delete_button.disabled = paths.is_empty()
+
+func _confirm_delete() -> void:
+	if saves.get_selected_items().is_empty():
+		status.text = "No campaign selected."
+		return
+	var index: int = saves.get_selected_items()[0]
+	delete_dialog.dialog_text = "Delete \"%s\"?\nThis cannot be undone." % saves.get_item_text(index).get_slice("  ·  ", 0)
+	delete_dialog.popup_centered()
+
+func _delete_campaign() -> void:
+	if saves.get_selected_items().is_empty(): return
+	var index: int = saves.get_selected_items()[0]
+	var label := saves.get_item_text(index).get_slice("  ·  ", 0)
+	if not Campaign.delete_save(paths[index]):
+		status.text = "Could not delete \"%s\"." % label
+		return
+	_refresh_saves()
+	if not paths.is_empty(): saves.select(mini(index, paths.size() - 1))
+	status.text = "Deleted \"%s\"." % label
 
 func _new_campaign() -> void:
 	if not seed_input.text.is_valid_int() or absi(int(seed_input.text)) > 2147483646:
@@ -254,11 +285,16 @@ func _select_region(coord: Vector2i) -> void:
 	var record: Dictionary = campaign.village_at(coord)
 	var active_here: bool = not record.is_empty() and record.id == campaign.active_village
 	var blocked: String = campaign.found_blocked(coord)
+	# Validate the selected site once, before offering the founding action.
+	# A naturally unplayable layout stays rugged rather than being flattened.
+	if blocked.is_empty() and record.is_empty(): blocked = campaign.world.check_site(coord)
 	var biome: Dictionary = campaign.world.data.biomes[info.biome]
 	var summary := "%s · %s\nRegion %d, %d · wildness %d" % [biome.name, "Harsh" if biome.get("harsh", false) else "Normal", coord.x, coord.y, info.wildness]
 	if not record.is_empty():
 		summary += "\n%s · %s\nTier %d · %d people · %d buildings" % [record.name, record.status.capitalize(), record.best_tier, record.population, record.buildings]
 		if not record.result.is_empty(): summary += "\nRun: %s · %d ticks" % [record.result.outcome.capitalize(), record.result.duration_ticks]
+		if record.status in ["ruin", "abandoned"]:
+			summary += "\nResettlement bonus: %d starting logs" % Campaign.RESETTLEMENT_LOGS
 	if active_here:
 		summary += "\nYour active village is waiting."
 	else:
@@ -278,6 +314,7 @@ func _select_region(coord: Vector2i) -> void:
 	found_button.text = "Resume " + record.name if active_here else ("Resettle village here" if not record.is_empty() and record.status in ["ruin", "abandoned"] else "Found village here")
 	found_button.tooltip_text = found_button.text
 	found_button.disabled = not active_here and not blocked.is_empty()
+	map_view._refresh_panel()
 
 func _enter_village() -> void:
 	var record: Dictionary = campaign.village_at(selected_hex)

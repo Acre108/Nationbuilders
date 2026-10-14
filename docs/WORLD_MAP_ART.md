@@ -48,8 +48,12 @@ The imported `assets/foliage/poly_nature` models retain their authored textures.
 
 ## Validation
 
-Run the GPU suite with `tools/run_tests.ps1 -WorldMap`. It checks three seeds, instanced scenery, shared-edge heights, river endpoints, art-mode switching, camera/selection preservation, world-state preservation, hover picking and the village return flow. It also compares rendered images with only wind time advancing, checks fixed instance transforms and zero-wind freezing, and verifies weather and hour controls, storm response and night cloud behaviour. It writes review images and 32 motion frames to `artifacts/`.
+Run the GPU suite with `tools/run_tests.ps1 -WorldMap`. It checks two seeds, instanced scenery, shared-edge heights, river endpoints, art-mode switching, camera/selection preservation, world-state preservation, hover picking and the village return flow. It also compares rendered images with only wind time advancing, checks fixed instance transforms and zero-wind freezing, and verifies weather and hour controls, storm response and night cloud behaviour. It writes review images and 32 motion frames to `artifacts/`.
 
 Run `py tools/build_world_map_motion.py` after the suite to encode the motion frames as the animated WebP above (requires Pillow). Campaign rendering/input checks remain available with `-Campaign`.
 
 Verified on Godot 4.7.2 / Forward+ / NVIDIA RTX 3060 Ti: **124 world-map checks and 17 campaign-view checks passed**. The engine reported its existing root-certificate-store diagnostic; rendering and interaction checks completed successfully.
+
+## Campaign and village integration
+
+The map and [generated hex villages](HEX_VILLAGES.md) now share the authoritative terrain layout for rivers, lakes, coasts, groves, meadow openings and relief. Campaign views show seven-hex reach outlines, blocked-site hatches, village history and the latest marker at each location. Press **F** to toggle settleability and **P** to print the hovered descriptor. Map camera, selection, linked mode, weather and wind survive campaign view transitions. The [world-map plan](PLAN-world-map.md) records completion of stages A through E and the follow-up art pass.

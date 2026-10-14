@@ -13,7 +13,12 @@ func _run() -> void:
 	if script == null or not script.can_instantiate():
 		check(false,"Site generation suite compiles")
 	else:
-		script.new().run(self)
+		var suite = script.new()
+		if "--fixtures-only" in OS.get_cmdline_user_args():
+			suite._water_fixtures(self)
+		else:
+			suite.run(self)
+			check(suite.completed,"Site generation suite completed all three seeds")
 	check(checks > 0,"Site generation suite executed checks")
 	print("SITE GENERATION: %d checks, %d failures" % [checks,failures.size()])
 	quit(0 if failures.is_empty() else 1)

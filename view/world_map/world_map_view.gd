@@ -52,6 +52,7 @@ var hint: Label
 var back_button: Button
 
 func _ready() -> void:
+	art_profile = art_profile.duplicate()
 	map_art = map_art.duplicate()
 	if "--unlinked" in OS.get_cmdline_user_args(): map_art.linked_tiles = false
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -72,7 +73,6 @@ func _ready() -> void:
 	display.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(display)
 	camera = CameraRig.new()
-	camera.pixel_snap_enabled = false
 	world_root.add_child(camera)
 	var light := DirectionalLight3D.new()
 	LightingSettings.configure_sun(light)
@@ -127,6 +127,7 @@ func set_world(value) -> void:
 	model_root = model.build()
 	world_root.add_child(model_root)
 	_refresh_campaign_overlays()
+	_refresh_blocked_overlay()
 	var area: Rect2 = model.bounds()
 	camera.bounds = area
 	camera.focus = Vector3(area.get_center().x, 0.0, area.get_center().y)
@@ -151,13 +152,18 @@ func center_on(coord: Vector2i) -> void:
 
 func capture_view_state() -> Dictionary:
 	return {"focus":camera.focus, "zoom_size":camera.zoom_size, "quarter_turn":camera.quarter_turn,
-		"selected_hex":selected_hex, "reveal_all":reveal_all, "linked_tiles":map_art.linked_tiles}
+		"selected_hex":selected_hex, "reveal_all":reveal_all, "linked_tiles":map_art.linked_tiles,
+		"show_settleability":show_settleability, "time_of_day":atmosphere.get_time_of_day(),
+		"clock":atmosphere.profile.day_length_minutes, "weather":int(atmosphere.get_target_weather()),
+		"amount":atmosphere.get_target_amount(), "wind_from":atmosphere.wind_from_degrees(),
+		"breeze":atmosphere.wind_breeze(), "gust_speed":atmosphere.wind_gust_speed(),
+		"fade":atmosphere.profile.weather_transition_seconds, "wetness":atmosphere.wetness}
 
 func restore_view_state(state: Dictionary) -> void:
 	if typeof(state.get("linked_tiles")) == TYPE_BOOL and state.linked_tiles != map_art.linked_tiles:
 		map_art.linked_tiles = state.linked_tiles
 		set_world(world)
-	if state.get("focus") is Vector3:
+	if state.get("focus") is Vector3 and state.focus.is_finite():
 		camera.focus = state.focus
 		camera.focus.x = clampf(camera.focus.x, camera.bounds.position.x, camera.bounds.end.x)
 		camera.focus.z = clampf(camera.focus.z, camera.bounds.position.y, camera.bounds.end.y)
@@ -165,6 +171,17 @@ func restore_view_state(state: Dictionary) -> void:
 		camera.zoom_size = clampf(float(state.zoom_size), 8.0, 48.0)
 	if state.get("quarter_turn") is int: camera.quarter_turn = posmod(state.quarter_turn, 4)
 	if typeof(state.get("reveal_all")) == TYPE_BOOL: reveal_all = state.reveal_all
+	if typeof(state.get("show_settleability")) == TYPE_BOOL: show_settleability = state.show_settleability
+	if state.get("time_of_day") is float: atmosphere.set_time_of_day(state.time_of_day)
+	if state.get("clock") is float: atmosphere.profile.day_length_minutes = state.clock
+	if state.get("weather") is int and state.get("amount") is float:
+		atmosphere.set_weather(clampi(state.weather, 0, 4), clampf(state.amount, 0, 1), true)
+	if state.get("wind_from") is float and state.get("breeze") is float and state.get("gust_speed") is float:
+		atmosphere.set_wind(state.wind_from, state.breeze, state.gust_speed)
+	if state.get("fade") is float: atmosphere.profile.weather_transition_seconds = state.fade
+	if state.get("wetness") is float: atmosphere.wetness = clampf(state.wetness, 0, 1)
+	atmosphere._tick(0.0)
+	_refresh_blocked_overlay()
 	camera.refresh()
 	weather_focus.position = camera.focus
 	model.set_motion_scale(camera.zoom_size)
@@ -181,6 +198,7 @@ func _refresh_campaign_overlays() -> void:
 	for record in provided_campaign.villages:
 		var coord: Vector2i = record.hex
 		if not world.has(coord): continue
+		if world.hex(coord).settlement != record.id: continue
 		var marker := Node3D.new()
 		marker.name = record.id
 		marker.position = WorldMapMesh.centre(coord)
@@ -310,7 +328,8 @@ func _refresh_blocked_overlay() -> void:
 	if prior != null:
 		world_root.remove_child(prior)
 		prior.queue_free()
-	if not show_settleability: return
+	var founding_mode: bool = campaign_mode and provided_campaign != null and provided_campaign.village == null
+	if not show_settleability and not founding_mode: return
 	var overlay := Node3D.new()
 	overlay.name = "Settleability"
 	world_root.add_child(overlay)
@@ -318,12 +337,36 @@ func _refresh_blocked_overlay() -> void:
 		var blocked: String = world.found_blocked(coord)
 		if provided_campaign != null: blocked = provided_campaign.found_blocked(coord)
 		if blocked.is_empty(): continue
-		var ring := MeshInstance3D.new()
-		ring.mesh = _ring_mesh(coord)
-		ring.mesh.surface_get_material(0).albedo_color = Color("bd8473")
-		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		ring.position = WorldMapMesh.centre(coord) + Vector3.UP * 0.011
-		overlay.add_child(ring)
+		var hatch := MeshInstance3D.new()
+		hatch.mesh = _hatch_mesh(coord)
+		hatch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		hatch.position = WorldMapMesh.centre(coord) + Vector3.UP * 0.012
+		overlay.add_child(hatch)
+
+func _hatch_mesh(coord: Vector2i) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for row in range(-5, 6):
+		for segment in range(-9, 10):
+			var x := segment * 0.12
+			var z := row * 0.22 + x * 0.45
+			var points := [Vector3(x,0,z), Vector3(x+0.12,0,z+0.054), Vector3(x+0.12,0,z+0.079), Vector3(x,0,z+0.025)]
+			var inside := true
+			for point in points:
+				if HexMath.from_point(Vector2(point.x,point.z) / WorldMapMesh.SCALE) != Vector2i.ZERO: inside = false
+			if not inside: continue
+			for point in [points[0],points[2],points[1],points[0],points[3],points[2]]:
+				point.y = model.surface_height(coord, WorldMapMesh.centre(coord) + point)
+				st.set_normal(Vector3.UP)
+				st.add_vertex(point)
+	var mesh := st.commit()
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color = Color(0.61,0.31,0.22,0.20)
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mesh.surface_set_material(0,material)
+	return mesh
 
 func to_viewport(point: Vector2) -> Vector2:
 	return (point - display.position) * Vector2(pixel_viewport.size) / display.size
@@ -399,9 +442,15 @@ func describe(coord: Vector2i) -> String:
 		var record: Dictionary = provided_campaign.village_at(coord) if provided_campaign != null else {}
 		lines.append("[color=#e0a17d]%s · %s[/color]" % [record.get("name", "Your village"), String(record.get("status", "active")).capitalize()])
 	if info.settlement.is_empty():
-		lines.append("[color=#9fc27a]A village can be founded here[/color]" if blocked.is_empty() else "[color=#c98a7a]%s[/color]" % blocked)
+		var message := "A village can be founded here" if provided_campaign == null or world.site_errors.has(coord) else "Select to check the founding terrain"
+		lines.append("[color=#9fc27a]%s[/color]" % message if blocked.is_empty() else "[color=#c98a7a]%s[/color]" % blocked)
 	else:
-		lines.append("[color=#9fc27a]Resume your village from the campaign panel[/color]")
+		var record: Dictionary = provided_campaign.village_at(coord) if provided_campaign != null else {}
+		var status_name: String = record.get("status", "active")
+		if status_name == "active": lines.append("[color=#9fc27a]Resume your village from the campaign panel[/color]")
+		elif status_name == "chartered": lines.append("[color=#e0bf78]Chartered village · review its record[/color]")
+		elif blocked.is_empty(): lines.append("[color=#9fc27a]This ruin can be resettled[/color]")
+		else: lines.append("[color=#c98a7a]%s[/color]" % blocked)
 	return "\n".join(lines)
 
 func _build_overlay() -> void:

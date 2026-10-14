@@ -50,6 +50,16 @@ func _apply_wind(fp: FoliageProfile, delta: float) -> void:
 	RenderingServer.global_shader_parameter_set("village_environment_time",environment_time)
 	RenderingServer.global_shader_parameter_set("village_wind_time",wind_time)
 
+func _apply_sky(fp: FoliageProfile, delta: float) -> void:
+	super._apply_sky(fp,delta)
+	# Orthographic board overviews expose sky-deck projection streaks. Keep
+	# the sky for ambient light and cloud shadows, with a quiet weather-aware
+	# backdrop behind the clipped hex rather than perspective cloud rays.
+	if grid != null and grid.hex_width > 0.0 and world_environment != null:
+		var env: Environment = world_environment.environment
+		env.background_mode = Environment.BG_COLOR
+		env.background_color = frame.fog_colour.lerp(art.shadow_tint,0.55).darkened(0.26)
+
 func wind_at(at: Vector3) -> float:
 	# CPU counterpart of village_gust; seeds ride the vegetation's gust fronts.
 	var phase: float = Vector2(at.x,at.z).dot(art.wind_direction.normalized())*0.23-wind_time*art.wind_speed*12.0

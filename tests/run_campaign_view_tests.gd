@@ -54,8 +54,24 @@ func select_hex_by_mouse(coord: Vector2i) -> void:
 
 func next_site() -> Vector2i:
 	for coord in app.campaign.world.hexes:
-		if app.campaign.found_blocked(coord).is_empty(): return coord
+		if app.campaign.found_blocked(coord).is_empty() and app.campaign.world.check_site(coord).is_empty(): return coord
 	return Vector2i(-999, -999)
+
+func overview_frames_site(village) -> bool:
+	# Measure the generated mask's actual hull, including its staircase edge.
+	# Inspect both the highest terrain and the underside of the visible board.
+	var points := PackedVector2Array()
+	for y in village.sim.grid.height:
+		for x in village.sim.grid.width:
+			var cell := Vector2i(x, y)
+			if not village.sim.grid.inside(cell): continue
+			for offset in [Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.DOWN]:
+				points.append(Vector2(cell) + offset)
+	var viewport_rect := Rect2(Vector2.ONE * 2.0, Vector2(village.pixel_viewport.size) - Vector2.ONE * 4.0)
+	for point in Geometry2D.convex_hull(points):
+		for height in [-1.1, village.relief.top]:
+			if not viewport_rect.has_point(village.camera.unproject_position(Vector3(point.x, height, point.y))): return false
+	return true
 
 func capture(filename: String) -> void:
 	await frames(3)
@@ -118,6 +134,9 @@ func _run() -> void:
 	village.camera.zoom_size = 36.0
 	village.camera.refresh()
 	village.atmosphere.set_time_of_day(15.0)
+	village.atmosphere.set_wind(67.0, 0.5, 1.3)
+	var expected_wind_strength: float = village.art_profile.wind_strength
+	var expected_wind_speed: float = village.art_profile.wind_speed
 	village._toggle_deposits()
 	var expected_focus: Vector3 = village.camera.focus
 	var original_id: String = app.campaign.id
@@ -135,6 +154,7 @@ func _run() -> void:
 	check(app.map_view != null and app.village_view == null, "World map button saves and suspends the village")
 	check(JSON.stringify(app.campaign.village.snapshot()) == before, "Returning to the map preserves the village state")
 	check(app.village_list.item_count == 1 and "Active" in app.village_list.get_item_text(0), "Village list shows the active village status")
+	check(app.map_view.campaign_overlays.get_child_count() == 1 and app.map_view.campaign_overlays.get_node_or_null(NodePath(app.campaign.active_village)) != null, "Active village has one map marker")
 	await click_at(app.village_list.global_position + app.village_list.get_item_rect(0).get_center())
 	check(app.selected_hex == coord and "Amber Hearth" in app.village_detail.text, "Clicking a village row centres its site and shows run statistics")
 	app._select_region(app.campaign.world.coord_at(0, 0))
@@ -143,6 +163,7 @@ func _run() -> void:
 	await frames(4)
 	check(app.village_view.camera.focus == expected_focus and app.village_view.camera.quarter_turn == 1 and app.village_view.camera.zoom_size == 36.0, "Resume restores the village camera")
 	check(app.village_view.speed == 0 and app.village_view.deposits_root.visible and is_equal_approx(app.village_view.atmosphere.get_time_of_day(), 15.0), "Resume restores pause, deposits and daylight settings")
+	check(is_equal_approx(app.village_view.atmosphere.wind_breeze(), 0.5) and is_equal_approx(app.village_view.atmosphere.wind_gust_speed(), 1.3) and is_equal_approx(app.village_view.atmosphere.wind_from_degrees(), 67.0) and is_equal_approx(app.village_view.art_profile.wind_strength, expected_wind_strength) and is_equal_approx(app.village_view.art_profile.wind_speed, expected_wind_speed), "Resume restores nondefault wind direction, breeze and gust speed without compounding authored strength")
 	app._leave_village()
 	await frames(4)
 	var loaded = Campaign.new()
@@ -176,6 +197,7 @@ func _run() -> void:
 	await keypress(KEY_ENTER)
 	await frames(5)
 	check(app.map_view != null and app.campaign.village == null and app.campaign.villages[0].status == "chartered", "Chartering ends the first run and returns to its map marker")
+	check("Chartered" in app.map_view.describe(coord) and not "Resume" in app.map_view.describe(coord), "Chartered hex offers review instead of an unavailable resume")
 	var second_site := next_site()
 	check(second_site != Vector2i(-999, -999), "Campaign offers another appropriately spaced site")
 	await select_hex_by_mouse(second_site)
@@ -184,6 +206,14 @@ func _run() -> void:
 	await click(app.found_button)
 	await frames(5)
 	check(app.village_view != null and app.campaign.villages.size() == 2, "Second village begins without replacing the chartered record")
+	if app.village_view == null:
+		printerr("Founding feedback at %s: %s" % [second_site, app.map_status.text])
+		await capture("campaign-next-site-error.png")
+		app.queue_free()
+		await frames()
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+		quit(1)
+		return
 	app.village_view._set_speed(0)
 	await click(app.village_view.hud.cog_button)
 	await click(app.village_view.hud.campaign_abandon_button)
@@ -197,12 +227,31 @@ func _run() -> void:
 	check(app.map_view != null and app.campaign.villages[1].status == "abandoned" and app.campaign.active_village.is_empty(), "Confirmed abandon ends the active run and leaves its ruin")
 	await select_hex_by_mouse(second_site)
 	check(not app.found_button.disabled and "Resettle" in app.found_button.text, "A ruin can be selected for resettlement")
+	check("Resettlement bonus: 12 starting logs" in app.region_text.text and "resettl" in app.map_view.describe(second_site).to_lower(), "Ruin founding card explains its bonus and hover offers resettlement")
 	app.founding_name.text = "Willow Renewed"
 	await click(app.found_button)
 	await frames(5)
 	check(app.village_view != null and app.campaign.villages.size() == 3 and app.campaign.active_record().resettlement_bonus.logs > 0, "Third run resettles the ruin and preserves all campaign records")
 	app.village_view._set_speed(0)
 	root.size = Vector2i(960, 640)
+	await frames(4)
+	await keypress(KEY_HOME)
+	check(app.village_view.camera.zoom_size == app.village_view.camera.zoom_max and app.village_view.camera.focus.x == app.village_view.sim.grid.width * 0.5 and app.village_view.camera.focus.z == app.village_view.sim.grid.height * 0.5, "Home centres and frames the whole generated hex")
+	check(overview_frames_site(app.village_view), "Overview keeps the actual hex hull, raised terrain and soil base inside the viewport at 960")
+	await capture("campaign-site-overview-960.png")
+	var overview_focus: Vector3 = app.village_view.camera.focus
+	var overview_zoom: float = app.village_view.camera.zoom_size
+	app._leave_village()
+	await frames(4)
+	check(app.map_view.campaign_overlays.get_child_count() == 2 and app.map_view.campaign_overlays.get_node_or_null(NodePath(app.campaign.villages[1].id)) == null and app.map_view.campaign_overlays.get_node_or_null(NodePath(app.campaign.active_village)) != null, "Resettlement draws the latest active marker once and keeps earlier ruins in history")
+	await click(app.resume_button)
+	await frames(4)
+	check(app.village_view.camera.focus == overview_focus and app.village_view.camera.zoom_size == overview_zoom and overview_frames_site(app.village_view), "Map return and resume preserve the overview camera framing")
+	app.village_view.camera.zoom_size = 22.0
+	app.village_view.camera.refresh()
+	await click(app.village_view.hud.cog_button)
+	await click(app.village_view.hud.site_overview_button)
+	check(app.village_view.camera.zoom_size == overview_zoom and not app.village_view.hud.options_menu.visible, "Site overview button frames the hex and closes options")
 	await click(app.village_view.hud.cog_button)
 	await frames(4)
 	check(app.village_view.hud.options_menu.get_global_rect().end.y <= 640.0, "Campaign options fit the minimum window height")
@@ -212,7 +261,8 @@ func _run() -> void:
 	check(app.menu.visible, "Village save and main menu returns at minimum window size")
 	await capture("campaign-menu-960.png")
 	var resumed = Campaign.new()
-	check(resumed.load_save(save_path) and resumed.villages.size() == 3 and resumed.village_name == "Willow Renewed", "Saving three runs reloads the active resettled village and history")
+	var reloaded: bool = resumed.load_save(save_path)
+	check(reloaded and resumed.villages.size() == 3 and resumed.village_name == "Willow Renewed", "Saving three runs reloads the active resettled village and history: " + resumed.last_error)
 	app.queue_free()
 	await frames()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))

@@ -283,9 +283,20 @@ func load_save(path: String) -> bool:
 		for key in ["map_view_state","village_view_state"]:
 			if not payload.get(key) is Dictionary: return _fail("Invalid saved camera state.")
 		var known_ids := {}
+		var latest: Dictionary = {}
 		var active_count := 0
 		for record in payload.villages:
 			if not _valid_record(record, generated) or known_ids.has(record.id): return _fail("Invalid saved village record.")
+			for coord in latest:
+				if coord != record.hex and HexMath.distance(coord,record.hex) < int(generated.data.world.min_village_distance):
+					return _fail("Invalid saved village spacing.")
+			if latest.has(record.hex):
+				var previous: Dictionary = latest[record.hex]
+				if previous.status not in ["ruin","abandoned"] or record.resettled_from != previous.id or record.resettlement_bonus.logs != RESETTLEMENT_LOGS:
+					return _fail("Invalid saved resettlement.")
+			elif not record.resettled_from.is_empty() or record.resettlement_bonus.logs != 0:
+				return _fail("Invalid saved resettlement.")
+			latest[record.hex] = record
 			known_ids[record.id] = true
 			if record.status == "active":
 				active_count += 1
@@ -303,6 +314,9 @@ func load_save(path: String) -> bool:
 		loaded_turn = payload.turn
 		loaded_created = payload.created
 		loaded_played = payload.last_played
+		var latest_village: String = loaded_active if not loaded_active.is_empty() else (loaded_records[-1].id if not loaded_records.is_empty() else "")
+		if not _valid_view_state(loaded_map,false,generated,restored,latest_village) or not _valid_view_state(loaded_view,true,generated,restored,latest_village):
+			return _fail("This campaign has damaged view state.")
 	elif restored != null:
 		loaded_active = payload.id + "-v1"
 		loaded_records.append({"id":loaded_active,"name":payload.village_name,"hex":payload.village_hex,"status":"active",
@@ -326,14 +340,54 @@ func load_save(path: String) -> bool:
 	last_played = loaded_played
 	return true
 
+static func _valid_view_state(state: Dictionary, village_view: bool, generated, restored, latest_village: String) -> bool:
+	if state.is_empty(): return true
+	# "pixel_effect" is no longer written; saves from before the pixel view's
+	# removal still carry it, and it is ignored on restore.
+	var booleans := ["pixel_effect","deposits","charter_offer_dismissed"] if village_view else ["reveal_all","linked_tiles","show_settleability"]
+	var zoom_max := 48.0
+	if village_view:
+		if restored == null: zoom_max = 1000000.0 # Completed run's view is retained for review only.
+		elif restored.site.footprint.has(0): zoom_max = maxf(48.0,maxf(restored.site.width,restored.site.height) * 1.15)
+	# Variant numbers preserve the camera's double precision. Vector2 stores
+	# float32 components and would reject a valid maximum overview of 193.2.
+	var ranges := {"zoom_size":[16.0 if village_view else 8.0,zoom_max],
+		"time_of_day":[0.0,24.0],"clock":[0.0,240.0],"amount":[0.0,1.0],
+		"wind_from":[0.0,360.0],"breeze":[0.0,3.0],"gust_speed":[0.0,3.0],
+		"fade":[0.0,60.0],"wetness":[0.0,1.0]}
+	if village_view and (latest_village.is_empty() or state.get("village_id") != latest_village): return false
+	for key in state:
+		if not key is String: return false
+		if key in booleans:
+			if not state[key] is bool: return false
+		elif ranges.has(key):
+			if not (state[key] is float or state[key] is int) or not is_finite(float(state[key])): return false
+			if state[key] < ranges[key][0] or state[key] > ranges[key][1]: return false
+		elif key == "focus":
+			if not state[key] is Vector3 or not state[key].is_finite() or state[key].length() > 1000000.0: return false
+		elif key == "quarter_turn":
+			if not state[key] is int or state[key] < 0 or state[key] > 3: return false
+		elif key == "weather":
+			if not state[key] is int or state[key] < 0 or state[key] > 4: return false
+		elif key == "speed" and village_view:
+			if not Building._whole(state[key]) or state[key] not in [0,1,3]: return false
+		elif key == "selected_hex" and not village_view:
+			if not state[key] is Vector2i or not generated.has(state[key]): return false
+		elif key == "village_id" and village_view:
+			if not state[key] is String: return false
+		else: return false
+	return true
+
 static func _valid_record(record, generated) -> bool:
 	if not record is Dictionary: return false
 	for key in ["id","name","status","save","resettled_from"]:
 		if not record.get(key) is String: return false
 	if record.id.is_empty() or record.status not in ["active","chartered","ruin","abandoned"]: return false
 	if not record.get("hex") is Vector2i or not generated.has(record.hex): return false
+	if not generated.data.biomes[generated.hex(record.hex).biome].settleable: return false
 	for key in ["founded_turn","ended_turn","best_tier","population","buildings"]:
 		if not record.get(key) is int or record[key] < (-1 if key == "ended_turn" else 0): return false
+	if record.best_tier < 1: return false
 	if not record.get("resettlement_bonus") is Dictionary or not record.resettlement_bonus.get("logs") is int or record.resettlement_bonus.logs not in [0,RESETTLEMENT_LOGS]: return false
 	if record.status == "active": return record.get("result") is Dictionary and record.result.is_empty()
 	if not RunResult.valid(record.get("result")): return false
@@ -348,6 +402,14 @@ static func save_paths(directory: String = SAVE_DIRECTORY) -> Array[String]:
 	paths.reverse()
 	return paths
 
+## Removes a campaign save (and any interrupted write beside it). Damaged
+## saves are deletable too, so players can clear entries that will not load.
+static func delete_save(path: String) -> bool:
+	if not path.ends_with(".campaign") or not FileAccess.file_exists(path): return false
+	if DirAccess.remove_absolute(ProjectSettings.globalize_path(path)) != OK: return false
+	if FileAccess.file_exists(path + ".tmp"): DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".tmp"))
+	return true
+
 func _fail(message: String) -> bool:
 	last_error = message
 	return false
@@ -356,18 +418,24 @@ static func _state(object) -> Dictionary:
 	var result := {}
 	for property in object.get_property_list():
 		var key: String = property.name
-		if not property.usage & PROPERTY_USAGE_SCRIPT_VARIABLE or key in ["buildings", "carriers", "_path_cache"]: continue
+		# Underscored variables are derived caches, rebuilt rather than saved.
+		if not property.usage & PROPERTY_USAGE_SCRIPT_VARIABLE or key in ["buildings", "carriers"] or key.begins_with("_"): continue
 		var value = object.get(key)
 		if value is Object: continue
 		result[key] = value
 	return result
 
+## Village and building fields added after version one; older saves keep the
+## new fields' defaults (no reserves, default markup, no frustration).
+const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration"]
+
 static func _restore(object, state: Dictionary) -> bool:
 	var expected := _state(object)
-	if expected.size() != state.size(): return false
+	for key in state:
+		if not expected.has(key) or typeof(state[key]) != typeof(expected[key]): return false
 	for key in expected:
-		if not state.has(key) or typeof(state[key]) != typeof(expected[key]): return false
-	for key in expected: object.set(key, state[key])
+		if not state.has(key) and key not in LEGACY_ADDED: return false
+	for key in state: object.set(key, state[key])
 	return true
 
 static func _restore_legacy(object, state: Dictionary) -> bool:

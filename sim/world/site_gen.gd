@@ -52,13 +52,13 @@ static func generate(world, coord: Vector2i):
 			var descriptor = world.hex(owner)
 			var water: String = Layout.water_at(world, owner, point, paths)
 			var tile := water if not water.is_empty() else "grass"
-			var relief: float = Layout.relief_at(world, owner, point)
-			var level: int = descriptor.elevation * 2 + int(floor(relief * 4.0))
+			var relief: float = Layout.relief_at(world, owner, point, paths)
+			var level: int = descriptor.elevation * 2 + int(floor(relief * 8.0))
 			if not descriptor.is_land(): level = 0
 			site.levels[index] = level
 			if water.is_empty():
 				var grove: float = Layout.grove_at(world, owner, point)
-				if grove > 0.68 - descriptor.forest * 0.42 and (x + y) % 3 == 0:
+				if descriptor.forest > 0.0 and grove > 0.68 - descriptor.forest * 0.42 and (x + y) % 3 == 0:
 					tile = "forest"
 				elif descriptor.biome == "peaks" or (descriptor.biome == "mountain_pass" and relief > 0.95):
 					tile = "rock"
@@ -194,6 +194,7 @@ static func _place_deposits(site, world, owners: Array[Vector2i], water_distance
 			var candidates: Array[Vector2i] = []
 			for cell in district_cells[owner]:
 				var index: int = site.index(cell)
+				if site.deposits[index] not in ["","timber","fertile_soil",deposit]: continue
 				var terrain: String = site.terrain[index]
 				if deposit in ["fish_shoals", "fresh_water", "shallows"] and terrain not in Grid.WATER: continue
 				if deposit not in ["fish_shoals", "fresh_water", "shallows"] and terrain in Grid.WATER: continue
@@ -205,7 +206,7 @@ static func _place_deposits(site, world, owners: Array[Vector2i], water_distance
 				# Prospecting exposes buried or dormant resources on dry ground;
 				# open-water resources must remain on actual promised water.
 				for cell in district_cells[owner]:
-					if site.terrain[site.index(cell)] in ["grass","forest","rock"]: candidates.append(cell)
+					if site.terrain[site.index(cell)] in ["grass","forest","rock"] and site.deposits[site.index(cell)] in ["","timber","fertile_soil",deposit]: candidates.append(cell)
 			if not candidates.is_empty():
 				var selected: Vector2i = candidates[IntNoise.mix(world.seed_value, owner.x, owner.y, deposit.hash() & 0x7FFF) % candidates.size()]
 				site.deposits[site.index(selected)] = deposit
