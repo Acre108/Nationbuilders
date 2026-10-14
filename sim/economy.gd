@@ -3,9 +3,10 @@ extends RefCounted
 ## chain pays the one before it, so a good costs its inputs plus the labour of
 ## the building that made it. A producer forwards that labour to the payroll,
 ## which households share at payday. Storehouses sell to households at a
-## markup and keep a capped trading purse. The treasury is filled by tax on
-## wages and by storehouse surpluses above that cap, and spends gold on
-## construction and public workers. The player can set part of it aside: a
+## markup, which pays their carriers: it goes to the payroll like a producer's
+## labour. A storehouse keeps a capped trading purse. The treasury is filled by
+## tax on wages and by storehouse surpluses above that cap, and spends gold on
+## construction and public services. The player can set part of it aside: a
 ## public pay reserve and a capital reserve, each closed to the other's spending.
 ## Money is closed: treasury, payroll and every building's silver always sum to
 ## the founding treasury. Reserves are part of the treasury, not extra money.
@@ -95,10 +96,14 @@ func purse_cap(sim, store) -> int:
 		restock += maxi(0, limit - store.inventory.count(good)) * int(prices[good])
 	return maxi(PURSE_CAP, restock)
 
-## Buildings that sell nothing but employ workers (the forester) are paid by
-## the treasury at payday.
+## Public services ("service" in buildings.json, such as the forester) sell
+## nothing; the treasury pays their workers at payday.
 static func is_public(row: Dictionary) -> bool:
-	return row.kind == "producer" and int(row.workers) > 0 and row.outputs.is_empty()
+	return bool(row.get("service", false))
+
+## A service's wages for one payday.
+static func upkeep(row: Dictionary) -> int:
+	return WAGE * int(row.workers) if is_public(row) else 0
 
 ## Working money the treasury hands a new building: a household's first purse,
 ## a storehouse's trading purse, or enough for a workshop to fill its inputs once.
@@ -165,7 +170,8 @@ func spendable(sim, building) -> int:
 
 ## The buyer pays the seller on delivery. A producer passes the labour part of
 ## its price to the payroll and keeps the rest to buy its next inputs. A
-## storehouse keeps the whole price, markup included, in its trading purse.
+## storehouse keeps the chain price, which restocks it, and passes a
+## household's markup to the payroll as its carriers' wages.
 func settle(sim, buyer, seller_uid: int, good: String) -> void:
 	var seller = sim.buildings.get(seller_uid)
 	if seller == null or seller == buyer:
@@ -174,12 +180,14 @@ func settle(sim, buyer, seller_uid: int, good: String) -> void:
 	if buyer.silver < cost:
 		return
 	buyer.silver -= cost
+	var work := 0
 	if seller.definition.kind == "producer":
-		var work := mini(int(labour[good]), cost)
-		sim.payroll += work
-		seller.silver += cost - work
-	else:
-		seller.silver += cost
+		work = mini(int(labour[good]), cost)
+	elif seller.definition.kind == "storehouse":
+		work = cost - int(prices[good])
+	sim.payroll += work
+	seller.wages_paid += work
+	seller.silver += cost - work
 
 ## At payday, storehouse surpluses above the purse cap go to the treasury, and
 ## the treasury pays public workers from the public pay reserve, then free gold.
@@ -200,7 +208,7 @@ func payday(sim) -> void:
 	for building in sim.buildings.values():
 		if not building.staffed or not is_public(building.definition):
 			continue
-		var due := WAGE * int(building.definition.workers)
+		var due := upkeep(building.definition)
 		var paid := mini(due, public_funds(sim))
 		sim.public_reserve -= mini(paid, sim.public_reserve)
 		sim.treasury -= paid

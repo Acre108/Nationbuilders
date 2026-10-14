@@ -2,6 +2,7 @@
 const ContentDB = preload("res://sim/content_db.gd")
 const Building = preload("res://sim/building.gd")
 const Economy = preload("res://sim/economy.gd")
+const Needs = preload("res://sim/needs.gd")
 signal tool_selected(id: String)
 signal rotation_requested
 signal deposits_toggled
@@ -499,7 +500,7 @@ func _refresh_treasury(sim) -> void:
 		_layout()
 
 func _treasury_ledger_text(sim) -> String:
-	var text := ""
+	var text := _services_text(sim)
 	if sim.ledger.is_empty():
 		text += "[color=#868f7a]Payday every %.0f s: tax and storehouse surpluses come in, public workers are paid.[/color]\n" % (float(sim.PAYDAY_TICKS)/10.0)
 	else:
@@ -521,6 +522,38 @@ func _treasury_ledger_text(sim) -> String:
 		text += "[b]Since last payday[/b]  construction %s\n" % _signed_silver(-int(sim.period.construction))
 	text += "[b]Public workers' frustration[/b]  " + ("%d" % sim.public_frustration if sim.public_frustration == 0 else "[color=#d98c6f]%d[/color]" % sim.public_frustration)
 	return text
+
+## Public services the treasury runs, grouped by building type: how many, what
+## they cost per payday, and what went unpaid at the last payday.
+func _services_text(sim) -> String:
+	var groups: Dictionary = {}
+	var total := 0
+	for building in sim.buildings.values():
+		var row: Dictionary = building.definition
+		if not Economy.is_public(row):
+			continue
+		var group: Dictionary = groups.get(row.id,{"name":row.name,"count":0,"idle":0,"due":0,"unpaid":0})
+		group.count += 1
+		if building.staffed:
+			group.due += Economy.upkeep(row)
+			if sim.tick >= sim.PAYDAY_TICKS:
+				group.unpaid += maxi(0,Economy.upkeep(row) - building.last_wage)
+		else:
+			group.idle += 1
+		groups[row.id] = group
+		total += Economy.upkeep(row) if building.staffed else 0
+	if groups.is_empty():
+		return "[b]Services[/b]  [color=#868f7a]none yet; a forester is the first[/color]\n\n"
+	var text := "[b]Services[/b]  %s per payday\n" % Economy.format(total)
+	for id in groups:
+		var group: Dictionary = groups[id]
+		text += "[color=#a9b39a]%s ×%d[/color]  %s" % [group.name,group.count,Economy.format(group.due)]
+		if group.idle > 0:
+			text += "  ·  %d without workers" % group.idle
+		if group.unpaid > 0:
+			text += "  ·  [color=#d98c6f]%s unpaid[/color]" % Economy.format(group.unpaid)
+		text += "\n"
+	return text + "\n"
 
 func _signed_silver(amount: int) -> String:
 	if amount == 0:
@@ -1006,6 +1039,9 @@ func _refresh_inspection(sim, building) -> void:
 		"producer":
 			var assigned := int(row.workers) if building.staffed else 0
 			text += "[b]Workers[/b]  %d / %d%s  ·  %d idle in village\n" % [assigned,int(row.workers),"" if building.workers_enabled else " (stopped)",sim.idle_workers]
+			var morale: int = Needs.morale(sim)
+			if Needs.work_speed(morale) < 100:
+				text += "[b]Speed[/b]  [color=#d98c6f]%d%%[/color]  ·  village morale %d%%\n" % [Needs.work_speed(morale),morale]
 			if row.has("forest_action"):
 				text += "[b]Work area[/b]  Up to %d tiles over reachable land\n" % int(row.work_radius)
 				text += "Mature tree → 1 log; leaves a stump\n" if row.forest_action == "cut" else "Plants saplings; trees mature in 60 s\nKeeps the village clearing open\n"
@@ -1020,9 +1056,9 @@ func _refresh_inspection(sim, building) -> void:
 					text += "[b]Sells[/b]  %s for %s  ·  %s of it wages\n" % [sim.db.goods[good].name,Economy.format(sim.price(good)),Economy.format(int(sim.economy.labour[good]))]
 				if not row.inputs.is_empty():
 					text += "[b]Purse[/b]  %s for buying inputs\n" % Economy.format(building.silver)
-			else:
-				var due := Economy.WAGE * int(row.workers)
-				text += "[b]Paid by[/b]  the treasury, %s per payday\n" % Economy.format(due)
+			elif Economy.is_public(row):
+				var due := Economy.upkeep(row)
+				text += "[b]Public service[/b]  the treasury pays %s per payday\n" % Economy.format(due)
 				if building.staffed and sim.tick >= sim.PAYDAY_TICKS:
 					text += "[b]Last payday[/b]  %s\n" % (Economy.format(building.last_wage) if building.last_wage >= due else "[color=#d98c6f]%s of %s: working unpaid[/color]" % [Economy.format(building.last_wage),Economy.format(due)])
 				if building.frustration > 0:
@@ -1034,7 +1070,9 @@ func _refresh_inspection(sim, building) -> void:
 		"house":
 			var tier: Dictionary = sim.db.tiers[building.tier]
 			text += "[b]Tier %d[/b]  %s\n[b]Workers provided[/b]  %d\n\n" % [building.tier,tier.name,int(tier.workers_per_house)]
-			text += "[b]Happiness[/b]  %d%%  ·  %d of %d needs met\n\n" % [building.happiness,building.needs_met.size(),tier.consumption.size()]
+			text += "[b]Happiness[/b]  %d%%  ·  %d of %d needs met this cycle\n" % [building.happiness,building.needs_met.size(),tier.consumption.size()]
+			var settled: int = Needs.settled(building)
+			text += "[b]Settled[/b]  %s\n\n" % ("after the first full cycle" if settled < 0 else "%d%%  ·  last %d cycles" % [settled,building.happiness_history.size()])
 			text += "[b]Needs[/b]  every %.0f s\n%s\n" % [float(tier.consume_every_ticks)/10.0,_needs_text(building,tier.consumption,sim)]
 			text += "[b]Pantry[/b]  %d / %d\n%s\n" % [building.input.total(),building.input.capacity,_goods(building.input.items,sim.db)]
 			text += "[b]Savings[/b]  %s\n[b]Wages[/b]  %s last payday, %s of it taxed  ·  paid every %.0f s\n\n" % [Economy.format(building.silver),Economy.format(building.last_wage),Economy.format(building.last_tax),float(sim.PAYDAY_TICKS)/10.0]
@@ -1045,8 +1083,10 @@ func _refresh_inspection(sim, building) -> void:
 				inspection_progress.visible = true
 				inspection_progress.max_value = float(tier.upgrade_after_ticks)
 				inspection_progress.value = building.satisfied_ticks
+			elif building.tier > 1 and Needs.unhappy(sim,building):
+				text += "[b]Downgrade in[/b]  [color=#d98c6f]%.1f s[/color]  ·  settled below %d%%" % [maxi(0,int(tier.downgrade_after_ticks)-building.unsatisfied_ticks)/10.0,int(tier.downgrade_below_happiness)]
 			elif not building.needs_ok:
-				text += "[b]Downgrade in[/b]  %.1f s" % [maxi(0,int(tier.downgrade_after_ticks)-building.unsatisfied_ticks)/10.0]
+				text += "[b]Demotes[/b]  if settled happiness stays below %d%%" % int(tier.downgrade_below_happiness)
 			else:
 				text += "[b]Needs satisfied[/b]  %.1f s" % [building.satisfied_ticks/10.0]
 		"storehouse":
@@ -1058,7 +1098,9 @@ func _refresh_inspection(sim, building) -> void:
 					total += 1
 					if carrier.stage != "idle": active += 1
 					if not carrier.cargo.is_empty(): carrying += 1
-			text += "\n[b]Carriers[/b]  %d active / %d\n[b]Carrying goods[/b]  %d\n\n" % [active,total,carrying]
+			# Carriers are jobs, staffed from the village's idle workers.
+			text += "\n[b]Carriers[/b]  %d active  ·  %d of %d on shift%s\n[b]Carrying goods[/b]  %d\n" % [active,building.crew,total,"" if building.crew >= total else " [color=#d98c6f](short of workers)[/color]",carrying]
+			text += "[b]Carriers' wages[/b]  %s so far, from the markup\n\n" % Economy.format(building.wages_paid)
 			text += "[b]Storage[/b]  %d / %d\n%s\n\n" % [building.inventory.total(),building.inventory.capacity,_goods(building.inventory.items,sim.db)]
 			text += "[b]Trading purse[/b]  %s  ·  keeps up to %s\n" % [Economy.format(building.silver),Economy.format(sim.economy.purse_cap(sim,building))]
 			text += "[b]Sells to households[/b]  at +%d%%; buys at the chain price\n" % sim.markup_percent
@@ -1105,6 +1147,8 @@ func _refresh_placement(sim, row: Dictionary, rotation_quarters: int = 0) -> voi
 			"" if sim.public_reserve == 0 else " outside public pay"])
 	if int(row.workers) > 0:
 		lines.append("[b]Workers[/b]  %d" % int(row.workers))
+	if Economy.is_public(row):
+		lines.append("[b]Public service[/b]  upkeep %s per payday from the treasury" % Economy.format(Economy.upkeep(row)))
 	match row.kind:
 		"producer":
 			if row.has("forest_action"):

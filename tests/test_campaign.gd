@@ -181,8 +181,14 @@ func _legacy_restore(t) -> void:
 		grid.erase(key)
 	var buildings: Array = []
 	for building in sim.buildings.values():
+		# Version one predates these fields; reset the live village to their
+		# defaults so both sides match.
+		building.happiness_history = []
+		building.crew = 0
+		building.wages_paid = 0
 		var building_state := Campaign._state(building)
-		building_state.erase("frustration") # Version one predates public-worker frustration.
+		for key in ["frustration","happiness_history","crew","wages_paid"]:
+			building_state.erase(key)
 		buildings.append({"id":building.definition.id,"state":building_state,
 			"input":building.input.items,"output":building.output.items,"inventory":building.inventory.items})
 	var carriers: Array = []

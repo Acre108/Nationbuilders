@@ -74,6 +74,17 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 				errors.append(prefix + "forestry must use trees rather than recipe inputs; planting has no goods output")
 		if row.get("kind") == "producer" and (row.get("cycle_ticks", 0) < 1 or (row.get("outputs", {}).is_empty() and row.get("forest_action", "") != "plant")):
 			errors.append(prefix + "producer needs a cycle and outputs")
+		# Public services sell nothing; the treasury pays their workers.
+		if row.has("service") and not row.service is bool:
+			errors.append(prefix + "service must be true or false")
+		elif row.get("kind") == "producer" and row.get("outputs") is Dictionary:
+			var sells_nothing: bool = row.outputs.is_empty() and int(row.get("workers", 0)) > 0
+			if row.get("service", false) and not sells_nothing:
+				errors.append(prefix + "a service employs workers and sells nothing")
+			elif sells_nothing and not row.get("service", false):
+				errors.append(prefix + "a producer that sells nothing must be a service")
+		elif row.get("service", false):
+			errors.append(prefix + "only producers can be services")
 		if row.get("inputs") is Dictionary and _total(row.inputs) > row.get("input_capacity", 0):
 			errors.append(prefix + "recipe exceeds input capacity")
 		if row.get("outputs") is Dictionary and _total(row.outputs) > row.get("output_capacity", 0):
@@ -99,6 +110,9 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 		for field in ["consume_every_ticks", "upgrade_after_ticks", "downgrade_after_ticks", "workers_per_house"]:
 			if not _integer(row.get(field), 0 if field == "upgrade_after_ticks" else 1):
 				errors.append("Tier %s: invalid %s" % [id, field])
+		# Settled happiness below this, for the downgrade time, demotes a house.
+		if not _integer(row.get("downgrade_below_happiness"), 0) or int(row.downgrade_below_happiness) > 100:
+			errors.append("Tier %s: invalid downgrade_below_happiness" % id)
 		if not row.get("unlocks") is Array:
 			errors.append("Tier %s: unlocks must be an array" % id)
 		else:

@@ -24,6 +24,12 @@ var missing_need := "water"
 ## Goods eaten this consumption cycle; happiness is the percentage of needs met.
 var needs_met: Dictionary = {}
 var happiness := 0
+## Happiness at the end of each of the last HAPPINESS_CYCLES completed cycles,
+## oldest first. Their average is the house's settled happiness (see needs.gd).
+const HAPPINESS_CYCLES := 3
+var happiness_history: Array = []
+## A storehouse's carriers on shift: carriers are jobs, staffed from idle workers.
+var crew := 0
 ## Money in silver: a household's savings, a workshop's purse for inputs, or a
 ## storehouse's trading purse. Houses also keep their last payday's wage and
 ## tax; public buildings (the forester) keep what the treasury last paid them.
@@ -32,6 +38,9 @@ var last_wage := 0
 var last_tax := 0
 ## Public workers left unpaid keep working; each unpaid worker-payday adds one.
 var frustration := 0
+## Wages this building has passed to the payroll: a producer's labour, or a
+## storehouse's markup paid to its carriers.
+var wages_paid := 0
 
 func _init(number: int, row: Dictionary, at: Vector2i, orientation: int = 0) -> void:
 	uid = number
@@ -58,7 +67,7 @@ func cells() -> Array[Vector2i]:
 	return result
 
 func snapshot() -> Dictionary:
-	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration}
+	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"happiness_history":happiness_history.duplicate(),"crew":crew,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration,"wages_paid":wages_paid}
 
 static func from_snapshot(state: Dictionary, content):
 	if not content.buildings.has(state.get("id")) or not _point(state.get("cell")) or not _point(state.get("work_cell")):
@@ -76,6 +85,11 @@ static func from_snapshot(state: Dictionary, content):
 		if key not in ["uid","id","cell","work_cell","input","output","inventory"]:
 			result.set(key, int(state[key]) if expected[key] is int else state[key].duplicate(true) if state[key] is Dictionary else state[key])
 	if not content.tiers.has(result.tier) or result.rotation_quarters > 3: return null
+	if state.happiness_history.size() > HAPPINESS_CYCLES: return null
+	result.happiness_history = []
+	for value in state.happiness_history:
+		if not _whole(value) or value < 0 or value > 100: return null
+		result.happiness_history.append(int(value))
 	result.work_cell = Vector2i(int(state.work_cell[0]),int(state.work_cell[1]))
 	for slot in ["input","output","inventory"]:
 		var restored = Storage.from_snapshot(state[slot], result.get(slot).capacity)

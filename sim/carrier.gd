@@ -8,6 +8,8 @@ var cargo := ""
 var stage := "idle"
 var move_ticks := 0
 var route_revision := -1
+## Derived each tick from the village's idle workers (carriers are jobs); not saved.
+var _on_shift := true
 
 func _init(number: int, store: int, at: Vector2i) -> void:
 	uid = number

@@ -1,6 +1,6 @@
 # Villagers: workforce, food, happiness and money
 
-**Status:** sections 1–5 are implemented. Section 5 (treasury controls and storehouse trade) landed on 14 October 2026; section 5.5 records its balance results. Section 6 lists open design questions.
+**Status:** sections 1–5 are implemented. Section 5 (treasury controls and storehouse trade) landed on 14 October 2026. Later that day carriers became paid jobs, services were formalised, and happiness gained effects (3.1). Section 5.5 records the balance results. Section 6 lists open design questions.
 
 Villagers are still counted per house, as in [DESIGN.md](DESIGN.md). Individual citizens are not simulated. This document covers how houses supply workers, how they get fed, how satisfied they are, and how they earn and spend money.
 
@@ -12,9 +12,14 @@ Villagers are still counted per house, as in [DESIGN.md](DESIGN.md). Individual 
   - releases its workers to the next buildings in order;
   - shows the status "workers stopped";
   - receives no input deliveries, although carriers still collect any finished output.
-- The village's idle workers are reported each tick as `idle_workers`. The inspector shows them next to each building's crew.
+- **Carriers are jobs too** (decided 14 October 2026). After buildings are staffed, each storehouse's carriers take idle workers, in placement order, up to its `carriers` count.
+  - The storehouse's `crew` is how many of its carriers are on shift. Carriers already on a trip count toward the crew first, so they can finish it. The rest of the crew goes to idle carriers in order.
+  - An off-shift carrier waits at its storehouse and takes no job.
+  - The starter village has 10 workers. Its buildings take 5, so it runs 5 of 6 carriers. Every new workplace takes carriers away until more houses are built.
+  - The storehouse inspector shows "n of 6 on shift" and "short of workers".
+- The village's idle workers, those left after buildings and carriers, are reported each tick as `idle_workers`. The inspector shows them next to each building's crew.
 
-This lets the player direct labour when there is not enough of it. For example, stop the woodcutter to staff the bakery.
+This lets the player direct labour when there is not enough of it. For example, stop the woodcutter to staff the bakery, or to put more carriers on shift.
 
 ## 2. Food reaches houses by carrier
 
@@ -32,12 +37,25 @@ Distance now matters for housing. A house far from its supply waits longer for e
 - Each consumption cycle (`consume_every_ticks`), a house tries to eat each need on its own, from its pantry.
 - A need missing at the start of the cycle still counts if it arrives before the cycle ends.
 - **Happiness = needs met this cycle ÷ needs of the tier**, as a percentage. A Villager house with water and bread but no logs is at 67%.
-- Tier rules are unchanged:
-  - A house with all of its needs met (100%) counts toward promotion.
-  - A house with any need unmet counts toward demotion after `downgrade_after_ticks`.
 - Shelter is not counted, since every house has it. Services such as the chapel will count as needs once they exist.
 
-Happiness has no mechanical effect yet. It is shown in the inspector and recorded in the snapshot. What it should affect is open question 1 in section 6.
+### 3.1 What happiness does
+
+Decided 14 October 2026. The rules live in [sim/needs.gd](../sim/needs.gd).
+
+- **Settled happiness.** Happiness swings within a cycle: it starts at 0 and rises as goods are eaten. So effects use each house's **settled happiness**: the average of its last 3 completed cycles (`happiness_history`, `Needs.settled()`).
+  - A new house, or one that has just changed tier, has none until its first full cycle, and is left out until then.
+- **Promotion is unchanged.** A house with all of its needs met (100%) for `upgrade_after_ticks` moves up a tier.
+- **Demotion threshold.** A house demotes when its settled happiness stays below its tier's `downgrade_below_happiness` (50%, `tiers.json`) for `downgrade_after_ticks`.
+  - One missing good is survivable. A Villager house without logs settles at 66% and keeps its tier.
+  - Two missing goods (33%) demote it.
+  - The inspector shows the settled value, the threshold and the countdown.
+- **Village morale and workplace speed.** Morale is the houses' settled happiness, averaged with each house weighted by the workers it provides. Morale is full while no house has settled.
+  - Every workplace works at `50% + morale ÷ 2` of full speed (`Needs.work_speed()`): 100% at full morale, 83% at 66%, 50% at 0.
+  - The sim spreads this evenly: at 75% speed, workplaces advance on 3 ticks in every 4.
+  - Producers, workshops and forestry all slow. Carriers and houses do not.
+  - Below full speed, a workplace's inspector shows "Speed 83% · village morale 66%".
+- **Not done here.** Happiness does not change how many workers a house provides. Unhappy households will cause problems of their own through factions, such as striking unionists ([FACTIONS.md](FACTIONS.md) §6). Factions can read `Needs.settled()` per house.
 
 ## 4. Money
 
@@ -55,7 +73,7 @@ Money is closed. The treasury (reserves included), the payroll and every buildin
 - The mill pays for its wheat.
 - The bakery pays for its flour and water.
 - A house pays for its bread.
-- A storehouse pays for what it collects, and is paid for what it hands out. Households also pay it a markup (5.3).
+- A storehouse pays for what it collects, and is paid for what it hands out. Households also pay it a markup, which goes to the payroll as its carriers' wages (5.3).
 
 A good's price is its inputs plus the labour of the building that made it:
 
@@ -81,7 +99,7 @@ Prices are worked out from `buildings.json` when the sim starts. A good that no 
   - Wages follow what the village actually sells. Goods nobody buys earn no one anything.
 - **Payday** (every 20 s) shares the payroll between houses by the workers each provides. Spare silver rotates between houses.
 - **Tax** is withheld at payday into the treasury: 10% of wages by default, set in the Treasury panel (5.1). Tax and storehouse surpluses (5.3) are the treasury's income.
-- **Public workers.** Buildings that sell nothing, such as the forester, are paid by the treasury at each payday: 10 s per worker, from the public pay reserve first (5.2). Unpaid public workers keep working, and their frustration grows.
+- **Public services.** Buildings marked `"service": true` in `buildings.json` (the forester so far) sell nothing. The treasury pays their workers at each payday: 10 s per worker, from the public pay reserve first (5.2). Unpaid public workers keep working, and their frustration grows. Content validation requires every producer that sells nothing to be a service.
 
 ### Spending
 
@@ -115,8 +133,8 @@ The inspector shows the money at each building:
 | --- | --- |
 | House | Savings, last payday's wage and tax, and each need's price direct and from a storehouse |
 | Workshop | What it sells, for how much, how much of that is wages, and its purse |
-| Forester | That the treasury pays it, what it was paid last payday, and its frustration |
-| Storehouse | Its trading purse and purse cap, its markup, the treasury in gold, and the tax rate |
+| Forester | That it is a public service, its upkeep, what it was paid last payday, and its frustration |
+| Storehouse | Carriers on shift and their wages so far, its trading purse and purse cap, its markup, the treasury in gold, and the tax rate |
 
 ## 5. Treasury controls and storehouse trade
 
@@ -138,16 +156,17 @@ The rules live in [sim/economy.gd](../sim/economy.gd). The panel is in [view/ove
   - **last payday**: tax, storehouse surplus, demolition refunds, public pay and construction, plus any public wages left unpaid;
   - **net per payday** for the last 6 paydays, newest first;
   - construction spent since the last payday;
+  - **services**: each public service type, how many, its upkeep per payday, and any wages left unpaid;
   - public workers' frustration.
 - The panel closes with ×, Escape, or by opening options, weather or the build menu.
-- Tax does not affect happiness. Happiness changes are still deferred.
+- Tax does not affect happiness.
 - The sim keeps a ledger: `period` accumulates since the last payday, and `ledger` holds the last `LEDGER_PAYDAYS` (6) closed paydays.
 
 ### 5.2 Reserves and public pay
 
 - The treasury has three parts: **free gold**, a **public pay reserve** and a **capital reserve**. The reserves are parts of `treasury`, not extra money, so the money total is unchanged.
 - The player moves gold by hand: `transfer_reserve("public" | "capital", amount)`. A positive amount moves free gold into the reserve and a negative one moves it back. It moves at most what is there, and fails only if nothing moves.
-- **Public pay** (the forester, and later services) draws on the public pay reserve first, then free gold. It never touches the capital reserve.
+- **Public pay** (the services of section 4, such as the forester) draws on the public pay reserve first, then free gold. It never touches the capital reserve.
 - **Construction** (materials and working money) draws on the capital reserve first, then free gold. It never touches the public pay reserve.
   - Placement fails with "Treasury needs … outside the public pay reserve" when only reserved gold would cover it.
   - The build card's "have" figure counts only gold construction can use.
@@ -165,7 +184,8 @@ The rules live in [sim/economy.gd](../sim/economy.gd). The panel is in [view/ove
   - A markup of 0% removes the minimum too.
 - **Everything else stays at chain price:** direct deliveries from producers, every workshop purchase, storehouses buying from producers or each other, pantry buy-backs, and the treasury buying construction logs. So the chain arithmetic is unchanged.
 - `spendable()` and `settle()` use `sale_price(buyer, seller, good)`, so a carrier is sent only when the household can pay that seller's price. A house's status reads "cannot afford …" when its silver is below the storehouse price.
-- **Purse cap.** The margin stays in the storehouse's trading purse. At payday, silver above the purse cap goes to the treasury as **storehouse surplus**. The cap is the larger of:
+- **The markup pays the carriers** (decided 14 October 2026). The storehouse keeps the chain price, which restocks it. The markup goes to the payroll as its carriers' wages, like a producer's labour, and so returns to households at payday. `settle()` computes it as one `work` value, where a future owner's share can be split off ([FACTIONS.md](FACTIONS.md) §5.1). The inspector shows the carriers' wages so far (`wages_paid`).
+- **Purse cap.** At payday, storehouse silver above the purse cap goes to the treasury as **storehouse surplus**. Now that the markup pays carriers, this is rare: mostly the founding logs the treasury buys back. The cap is the larger of:
   - 2 g (`PURSE_CAP`, twice a storehouse's starting capital);
   - the silver needed to restock, up to the per-good `good_limit`, every good the village currently makes.
 
@@ -174,11 +194,26 @@ The rules live in [sim/economy.gd](../sim/economy.gd). The panel is in [view/ove
 
 ### 5.4 Saves
 
-New sim snapshot keys: `public_reserve`, `capital_reserve`, `markup_percent`, `public_frustration`, `period` and `ledger`. Buildings gain `frustration`. Snapshots with reserves larger than the treasury, or with malformed ledger entries, are rejected. Version-one campaign saves load with these fields at their defaults.
+New sim snapshot keys: `public_reserve`, `capital_reserve`, `markup_percent`, `public_frustration`, `period` and `ledger`. Buildings gain `frustration`, `wages_paid`, `crew` and `happiness_history` (at most 3 whole values from 0 to 100). Carriers' `_on_shift` is derived each tick and not saved. Snapshots with reserves larger than the treasury, or with malformed ledger entries, are rejected. Version-one campaign saves load with these fields at their defaults.
 
 ### 5.5 Balance results
 
-Hour-long headless soaks, seed 73 (`tools/soak_village.gd`, with the storehouse `good_limit` of 30):
+**Current rules** (carriers paid from the markup and staffed from the workforce, happiness effects, 10% markup). Two-hour headless soaks, seed 73 (`tools/soak_village.gd`):
+
+| Village | Tax | Result after 120 min |
+| --- | --- | --- |
+| 2 houses + forester | 10% (default) | Tier 2 throughout, with savings steady at about 5 g and 4.5 g. The treasury runs dry by minute 50: the forester's 10 s a payday is more than tax brings in, so it goes partly unpaid and frustration rises. |
+| Same | **15%** | **Balanced.** Tier 2 throughout, with savings steady at 2.3–3.3 g. The treasury drifts from 4.9 g to 4.4 g, and the forester is paid. |
+| Same | 20% | Households drained to about 5 s by minute 80 ("cannot afford logs"), still Tier 2. The treasury holds 9.5 g. |
+| 1 house + forester | 10% | Tier 2 throughout. The house holds 9.8 g and the treasury 3 s, so the forester goes partly unpaid. |
+| 1 house, no forester | 10% | Logs run out (no forester). At 66% the house keeps Tier 2, as intended, but tax moves its savings to the treasury. It cannot afford bread by minute 60 and is Tier 1 by minute 80. |
+
+What changed:
+- **The markup no longer drains households.** It comes back as carrier wages, so only tax leaves them. The two-house village that went broke by minute 90 now holds its savings.
+- **Tax against services is now the balance.** With no service, tax slowly moves all money to the treasury. With one forester and two houses, 15% tax balances it. That is the Treasury panel's job, and the panel shows unpaid services.
+- **Demotion is gentler.** A missing good costs morale and speed, not the tier.
+
+**Earlier results, before carriers were paid** (14 October 2026). Hour-long headless soaks, seed 73 (`tools/soak_village.gd`, with the storehouse `good_limit` of 30):
 
 | Village | Markup | Result after 60 min |
 | --- | --- | --- |
@@ -197,7 +232,11 @@ What this shows:
 - Two of the failures are content gaps, not money: no village makes berries, and without a forester the woodcutter runs out of trees.
 - 25% was the proposed markup, but it drained households within 30 minutes in every layout, so the default is now 10%. That only slows the drain: without the player building or adding public workers, households are broke by minute 90 (see 5.6, recycling the margin).
 
-**Tests.** `tests/test_sim.gd` (`_treasury` and `_money`) covers:
+**Tests.** `tests/test_sim.gd` (`_treasury`, `_money`, `_carrier_jobs`, `_services` and `_happiness_effects`) covers:
+- carriers staffed after buildings, with no more working than the crew;
+- the markup paid to carriers through the payroll;
+- service validation;
+- settled happiness, the demotion threshold, morale, and half speed at zero morale;
 - tax limits;
 - reserve transfers, and that construction and public pay each leave the other's reserve alone;
 - frustration from unpaid public workers, who keep working;
@@ -211,19 +250,15 @@ What this shows:
 ### 5.6 Still open
 
 - **Should the player set the markup** next to the tax rate? It is shown read-only for now.
-- **Recycling the margin.** A storehouse's margin reaches households only through the treasury, when the player builds or pays public workers. If the player does neither, even the 10% default leaves households broke after about 90 minutes. Options:
-  - pay carriers from the margin, as storehouse labour into the payroll;
-  - automatic treasury spending, such as upkeep or services;
-  - leave it to the player.
+- **Default tax.** At 10%, a village with one forester runs its treasury dry. With two houses and a forester, 15% balances it. Should the default rise, or is finding the balance the player's job?
+- More services. The forester is the first; a chapel (a Villager need in DESIGN.md) is the obvious second.
+- Settled on 14 October 2026: the margin pays carriers, and the treasury spends on services (5.3, section 4).
 - **Automatic allocation and reserve targets** (5.2).
 - **When frustration decays**, and what the trade union does with it.
 
 ## 6. Open questions
 
-1. **What should happiness do?** Deferred for now. Options:
-   - scale the workers a house provides;
-   - feed village morale;
-   - set the promotion and demotion thresholds.
+1. **What should happiness do?** Settled on 14 October 2026: it sets the demotion threshold and workplace speed (3.1). Not chosen: scaling the workers a house provides; faction problems will take that role.
 2. **Should needs have weights?** At the moment water counts the same as logs. Survival needs (water, staple food) might count for more than tier goods.
 3. **Labour priority.** On/off is the first step. A per-building priority (high / normal / low) may be needed once villages have 20+ buildings.
 4. **Pantry size by tier.** Six slots fit three goods at two cycles each. Tier 3, with four or more goods, will need a larger pantry or a single cycle of stock.

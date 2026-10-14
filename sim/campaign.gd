@@ -427,7 +427,7 @@ static func _state(object) -> Dictionary:
 
 ## Village and building fields added after version one; older saves keep the
 ## new fields' defaults (no reserves, default markup, no frustration).
-const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration"]
+const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration","happiness_history","crew","wages_paid"]
 
 static func _restore(object, state: Dictionary) -> bool:
 	var expected := _state(object)

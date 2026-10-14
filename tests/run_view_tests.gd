@@ -260,7 +260,7 @@ func _check_treasury() -> void:
 	await _click(view.hud.reserve_buttons.capital[Economy.SILVER_PER_GOLD].get_global_rect().get_center())
 	check(sim.capital_reserve > 0 and Economy.free_gold(sim) == free - sim.public_reserve - sim.capital_reserve and view.hud.treasury_values.free.text == Economy.format(Economy.free_gold(sim)), "Treasury panel sets gold aside for construction")
 	var panel_text: String = view.hud.treasury_ledger.get_parsed_text()
-	check("frustration" in panel_text, "Treasury panel reports public workers' frustration")
+	check("frustration" in panel_text and "Services" in panel_text, "Treasury panel reports services and public workers' frustration")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/treasury-panel.png")
 	await _click(view.hud.reserve_buttons.public[-Economy.SILVER_PER_GOLD].get_global_rect().get_center())

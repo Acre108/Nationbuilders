@@ -2,6 +2,7 @@ extends RefCounted
 const Sim = preload("res://sim/village_sim.gd")
 const Scenario = preload("res://sim/scenario.gd")
 const Economy = preload("res://sim/economy.gd")
+const Needs = preload("res://sim/needs.gd")
 
 func run(t) -> void:
 	_chain(t)
@@ -16,6 +17,9 @@ func run(t) -> void:
 	_pantry_and_happiness(t)
 	_money(t)
 	_treasury(t)
+	_carrier_jobs(t)
+	_services(t)
+	_happiness_effects(t)
 
 func _chain(t) -> void:
 	var sim = Sim.new(73)
@@ -104,7 +108,9 @@ func _disconnection(t) -> void:
 		if sim.grid.access(house).is_empty():
 			break
 		sim.step(1)
-	sim.step(950)
+	# It eats its pantry, its settled happiness falls below the threshold, and
+	# it stays there for the downgrade time.
+	sim.step(2000)
 	t.check(house.tier == 1 and house.status.contains("road"), "Unreachable house downgrades after timeout")
 	var disconnected = _fixture()
 	disconnected.place("storehouse",Vector2i(17,21))
@@ -370,9 +376,13 @@ func _treasury(t) -> void:
 	t.check(sim.economy.retail_price(sim,"bread") == bread + (bread * Economy.DEFAULT_MARKUP_PERCENT + 50) / 100, "The default markup is applied to the chain price")
 	var house_silver: int = house.silver
 	var store_silver: int = store.silver
+	var payroll_before: int = sim.payroll
+	var carried_before: int = store.wages_paid
 	sim.economy.settle(sim,house,store.uid,"berries")
 	var retail: int = sim.economy.retail_price(sim,"berries")
-	t.check(retail > sim.price("berries") and house.silver == house_silver - retail and store.silver == store_silver + retail, "A household pays the storehouse its markup")
+	var margin: int = retail - sim.price("berries")
+	t.check(margin > 0 and house.silver == house_silver - retail, "A household pays a storehouse its markup")
+	t.check(store.silver == store_silver + sim.price("berries") and sim.payroll == payroll_before + margin and store.wages_paid == carried_before + margin, "The markup pays the carriers through the payroll; the storehouse keeps the chain price")
 	t.check(sim.place("well",Vector2i(18,21)), "Place a well beside the house")
 	var well = _find(sim,"well")
 	house_silver = house.silver
@@ -409,6 +419,91 @@ func _treasury(t) -> void:
 	tampered = sim.snapshot()
 	tampered.ledger.append({"tax":1})
 	t.check(Sim.from_snapshot(tampered) == null, "Snapshots with malformed ledger entries are rejected")
+
+## Carriers are jobs: staffed from idle workers after buildings.
+func _carrier_jobs(t) -> void:
+	var sim = _fixture()
+	var road: Array[Vector2i] = []
+	for x in range(12,27):
+		road.append(Vector2i(x,20))
+	sim.place_road(road)
+	sim.place("storehouse",Vector2i(12,21))
+	var store = _find(sim,"storehouse")
+	sim.step(1)
+	t.check(store.crew == 4 and sim.idle_workers == 0, "Carriers take the village's idle workers (4 founders for 6 carriers)")
+	sim.place("farm",Vector2i(16,21))
+	var farm = _find(sim,"farm")
+	sim.step(1)
+	t.check(farm.staffed and store.crew == 2, "Buildings are staffed before carriers")
+	var on_shift := 0
+	for carrier in sim.carriers:
+		if carrier._on_shift: on_shift += 1
+	t.check(on_shift == store.crew, "Only the crew's carriers are on shift")
+	var most_busy := 0
+	for index in 400:
+		sim.step(1)
+		var busy := 0
+		for carrier in sim.carriers:
+			if carrier.stage != "idle": busy += 1
+		most_busy = maxi(most_busy,busy)
+	t.check(most_busy > 0 and most_busy <= store.crew, "No more carriers work than the crew: %d of %d" % [most_busy,store.crew])
+	sim.set_workers_enabled(farm.uid,false)
+	sim.step(1)
+	t.check(store.crew == 4, "Stopping a building frees its workers for carrying")
+	var starter = Sim.new(73)
+	Scenario.starter(starter)
+	starter.step(1)
+	t.check(_find(starter,"storehouse").crew == starter.workforce() - 5, "The starter village runs %d of 6 carriers" % _find(starter,"storehouse").crew)
+
+## Public services are marked in data and paid by the treasury.
+func _services(t) -> void:
+	var db = preload("res://sim/content_db.gd").new()
+	db.load_directory()
+	t.check(Economy.is_public(db.buildings.forester) and Economy.upkeep(db.buildings.forester) == Economy.WAGE * int(db.buildings.forester.workers), "The forester is a public service with upkeep")
+	t.check(not Economy.is_public(db.buildings.mill) and Economy.upkeep(db.buildings.mill) == 0, "Workshops are not services")
+	# validate() replaces the db's rows, so every case starts from the same copy.
+	var base: Array = db.buildings.values().duplicate(true)
+	var goods: Array = db.goods.values().duplicate(true)
+	var tiers: Array = db.tiers.values().duplicate(true)
+	for case in [["service",false,"A producer that sells nothing must be a service"],["outputs",{"logs":1},"A service cannot sell goods"]]:
+		var rows: Array = base.duplicate(true)
+		for row in rows:
+			if row.id == "forester":
+				row[case[0]] = case[1]
+				if case[0] == "outputs": row.erase("forest_action")
+		t.check(not db.validate(goods.duplicate(true),rows,tiers.duplicate(true)), case[2])
+
+## Happiness settles over the last cycles; it decides demotion and workplace speed.
+func _happiness_effects(t) -> void:
+	t.check(Needs.work_speed(100) == 100 and Needs.work_speed(0) == Needs.MIN_WORK_SPEED and Needs.work_speed(66) == 83, "Workplace speed follows morale from half to full")
+	# A house with no road or storehouse, its pantry filled by hand.
+	var sim = _fixture()
+	sim.place("house",Vector2i(20,21))
+	var house = _find(sim,"house")
+	t.check(Needs.settled(house) == -1 and Needs.morale(sim) == 100, "Before a full cycle a house has no settled happiness and morale is full")
+	house.tier = 2
+	for index in 1500:
+		for good in ["water","bread"]:
+			if house.input.count(good) == 0: house.input.add(good)
+		sim.step(1)
+	t.check(house.tier == 2 and Needs.settled(house) == 66 and house.happiness_history.size() == 3, "One missing good leaves a house unhappy but not demoted: settled %d" % Needs.settled(house))
+	t.check(Needs.morale(sim) == 66, "Village morale is the houses' settled happiness")
+	for index in 2000:
+		if house.input.count("water") == 0: house.input.add("water")
+		sim.step(1)
+		if house.tier == 1: break
+	t.check(house.tier == 1, "A house whose settled happiness stays below the threshold is demoted")
+	t.check(house.happiness_history.is_empty() or house.happiness_history.size() <= 1, "A new tier starts a fresh happiness history")
+	# Low morale slows workplaces.
+	var fast = _fixture()
+	var slow = _fixture()
+	for village in [fast,slow]:
+		village.place("farm",Vector2i(12,15))
+	slow.place("house",Vector2i(20,21))
+	_find(slow,"house").happiness_history = [0,0,0]
+	fast.step(140)
+	slow.step(140)
+	t.check(Needs.morale(slow) == 0 and int(slow.produced.get("wheat",0)) * 2 == int(fast.produced.get("wheat",0)), "Workplaces at zero morale work at half speed: %d vs %d wheat" % [int(slow.produced.get("wheat",0)),int(fast.produced.get("wheat",0))])
 
 func _to_payday(sim) -> void:
 	sim.step(sim.PAYDAY_TICKS - sim.tick % sim.PAYDAY_TICKS)

@@ -249,6 +249,10 @@ func step(ticks: int = 1) -> void:
 		# Rebuild derived reservations once per tick, in case a caller edited carriers.
 		_jobs_changed()
 		grid.grow_trees(tick)
+		# Low village morale slows every workplace: at speed s%, workplaces
+		# advance on s of every 100 ticks, spread evenly.
+		var speed: int = Needs.work_speed(Needs.morale(self))
+		var working: bool = (tick * speed) / 100 != ((tick - 1) * speed) / 100
 		var workers := workforce()
 		for building in buildings.values():
 			var required := int(building.definition.workers)
@@ -256,10 +260,11 @@ func step(ticks: int = 1) -> void:
 			if building.staffed:
 				workers -= required
 			if building.definition.kind == "producer":
-				_produce(building)
+				if working:
+					_produce(building)
 			elif building.definition.kind == "storehouse":
 				building.status = "connected" if not grid.access(building).is_empty() else "no road"
-		idle_workers = workers
+		idle_workers = _staff_carriers(workers)
 		for carrier in carriers:
 			_update_carrier(carrier)
 		for building in buildings.values():
@@ -267,6 +272,28 @@ func step(ticks: int = 1) -> void:
 				needs.update(self, building)
 		if tick % PAYDAY_TICKS == 0:
 			economy.payday(self)
+
+## Carriers are jobs too. After buildings are staffed, each storehouse's
+## carriers take idle workers, in placement order, up to its carrier count.
+## Carriers already on a trip count first so they can finish it; the rest of
+## the crew goes to idle carriers in order. Off-shift carriers wait at home.
+## Returns the workers still idle.
+func _staff_carriers(workers: int) -> int:
+	var shifts: Dictionary = {}
+	for building in buildings.values():
+		if building.definition.kind == "storehouse":
+			building.crew = mini(int(building.definition.carriers), workers)
+			workers -= building.crew
+			shifts[building.uid] = building.crew
+	for busy in [true, false]:
+		for carrier in carriers:
+			if (carrier.stage != "idle") != busy:
+				continue
+			var left: int = shifts.get(carrier.owner, 0)
+			carrier._on_shift = left > 0
+			if left > 0:
+				shifts[carrier.owner] = left - 1
+	return workers
 
 ## Sets the share of household wages taken into the treasury at payday.
 func set_tax_percent(percent: int) -> bool:
@@ -359,6 +386,9 @@ func _update_carrier(carrier) -> void:
 			if entries.is_empty():
 				return
 			carrier.cell = entries[0]
+		# Carriers are jobs: one without a worker this tick waits at home.
+		if not carrier._on_shift:
+			return
 		# Within a tick only carriers change the village, and every change they
 		# make passes through _jobs_changed(), so an unchanged search would fail again.
 		if _idle_misses_version != _jobs_version:
