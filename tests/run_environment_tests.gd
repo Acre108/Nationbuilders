@@ -19,8 +19,10 @@ func _run() -> void:
 	await process_frame
 	check(view.foliage.plants.size() > 100,"Imported trees and rocks populate the grid")
 	check(view.foliage.grass.multimesh.instance_count > 100,"Sparse grass patches use batched SpacesOS geometry")
+	var renderable := true
 	for plant in view.foliage.plants.values():
-		check(plant.mesh.get_surface_count() > 0,"Imported asset has renderable surfaces")
+		renderable = renderable and plant.mesh.get_surface_count() > 0
+	check(renderable,"Every imported tree and rock has renderable surfaces")
 	var cell := Vector2i(-1,-1)
 	for index in view.foliage.grass.multimesh.instance_count:
 		var first_tuft: Vector3 = view.foliage.grass.multimesh.get_instance_transform(index).origin

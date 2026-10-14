@@ -4,7 +4,6 @@ var quarter_turn := 0
 var zoom_size := 22.0
 var zoom_min := 16.0
 var zoom_max := 48.0
-var pixel_snap_enabled := true
 ## Where the focus may pan; the view sets it from the site's size.
 var bounds := Rect2(4.0, 4.0, 31.0, 31.0)
 
@@ -23,13 +22,6 @@ func refresh() -> void:
 	far = 180.0 * distance_scale
 	position = focus + direction * 34.0 * distance_scale + Vector3.UP * 28.0 * distance_scale
 	look_at(focus)
-	if not pixel_snap_enabled: return
-	# Snap camera translation in its screen-space basis at native resolution.
-	var units_per_pixel := size / 360.0
-	var right := global_basis.x
-	var up := global_basis.y
-	global_position += right * (snappedf(global_position.dot(right),units_per_pixel) - global_position.dot(right))
-	global_position += up * (snappedf(global_position.dot(up),units_per_pixel) - global_position.dot(up))
 
 func rotate_quarter(direction: int) -> void:
 	quarter_turn = posmod(quarter_turn + direction,4)

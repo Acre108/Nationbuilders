@@ -45,22 +45,29 @@ func _run() -> void:
 	var consumed := false
 	var pickup := false
 	var previous: Dictionary = {}
+	# Every tick and producer is compared; each property reports once.
+	var presentation_pure := true
+	var inputs_match := true
+	var outputs_match := true
 	for tick in 700:
 		view.sim.step(1)
 		var snapshot: Dictionary = view.sim.snapshot()
 		view._sync_view()
-		check(view.sim.snapshot() == snapshot, "Presentation leaves simulation and RNG unchanged")
+		presentation_pure = presentation_pure and view.sim.snapshot() == snapshot
 		for state in view.sim.buildings.values():
 			if state.definition.kind != "producer": continue
 			var node: Node3D = view.building_nodes[state.uid]
-			check(visible_stock(node, "Input") == state.input.items, "Live input stock follows deliveries/consumption")
-			check(visible_stock(node, "Output") == state.output.items, "Live output stock follows production/pickups")
+			inputs_match = inputs_match and visible_stock(node, "Input") == state.input.items
+			outputs_match = outputs_match and visible_stock(node, "Output") == state.output.items
 			for good in state.input.items: seen[good] = true
 			for good in state.output.items: seen[good] = true
 			if previous.has(state.uid):
 				if state.input.total() < int(previous[state.uid][0]): consumed = true
 				if state.output.total() < int(previous[state.uid][1]): pickup = true
 			previous[state.uid] = [state.input.total(), state.output.total()]
+	check(presentation_pure, "Presentation leaves simulation and RNG unchanged for 700 ticks")
+	check(inputs_match, "Live input stock follows deliveries/consumption for 700 ticks")
+	check(outputs_match, "Live output stock follows production/pickups for 700 ticks")
 	check(consumed and pickup, "Observed both recipe consumption and carrier pickup")
 	for good in ["water", "logs", "wheat", "flour", "bread"]:
 		check(seen.has(good), "Live chain showed " + good)
@@ -86,11 +93,11 @@ func _run() -> void:
 	bakery.free()
 	# Capture the playable village with honest inventory, then an explicit staged kit.
 	view.hud.visible = false
-	await capture("medieval-village", true)
+	await capture("medieval-village")
 	view.camera.zoom_size = 16
 	view.camera.focus = Vector3(view.sim.site.founding_spot.x+3,0,view.sim.site.founding_spot.y-1)
 	view.camera.refresh()
-	await capture("medieval-village-close", true)
+	await capture("medieval-village-close")
 	view.buildings_root.visible = false
 	view.roads_root.visible = false
 	view.scenery_root.visible = false
@@ -120,11 +127,10 @@ func _run() -> void:
 		label.modulate = Color("302e26")
 		label.outline_modulate = Color("d7caa4")
 		gallery.add_child(label)
-	view.pixel_viewport.size = Vector2i(1280,720)
 	view.camera.zoom_size = 15
 	view.camera.focus = Vector3(20.7,.2,19.4)
 	view.camera.refresh()
-	await capture("medieval-kit-empty", false)
+	await capture("medieval-kit-empty")
 	for pair in fixtures:
 		var state = pair[1]
 		if state.definition.kind != "producer": continue
@@ -132,7 +138,7 @@ func _run() -> void:
 			state.input.add(good, 3 if state.definition.inputs.size() == 2 else 6)
 		for good in state.definition.outputs: state.output.add(good, 6)
 		view.factory.medieval.sync_stock(pair[0],state)
-	await capture("medieval-kit-stocked", false)
+	await capture("medieval-kit-stocked")
 	# Side view clearly shows input sacks/barrels separately from saleable bread.
 	for pair in fixtures: pair[0].visible = str(pair[1].definition.id) == "bakery"
 	for child in gallery.get_children():
@@ -141,21 +147,20 @@ func _run() -> void:
 	view.camera.zoom_size = 4.5
 	view.camera.quarter_turn = 3
 	view.camera.refresh()
-	await capture("medieval-bakery-stocked", false)
+	await capture("medieval-bakery-stocked")
 	var stock_bakery = fixtures[7][1]
 	stock_bakery.input.take("flour",3)
 	stock_bakery.input.take("water",3)
 	stock_bakery.output.take("bread",6)
 	view.factory.medieval.sync_stock(fixtures[7][0],stock_bakery)
-	await capture("medieval-bakery-empty", false)
+	await capture("medieval-bakery-empty")
 	view.queue_free()
 	await process_frame
 	print("MEDIEVAL BUILDINGS: %d checks, %d failures" % [checks,failures.size()])
 	quit(0 if failures.is_empty() else 1)
 
-func capture(name: String, pixel_scale: bool) -> void:
+func capture(name: String) -> void:
 	for frame in 4: await process_frame
 	await RenderingServer.frame_post_draw
 	var image: Image = view.pixel_viewport.get_texture().get_image()
-	if pixel_scale: image.resize(image.get_width()*2,image.get_height()*2,Image.INTERPOLATE_NEAREST)
 	image.save_png("res://artifacts/"+name+".png")

@@ -39,7 +39,7 @@ The import manifest still lists them as a record of the original copy, and
   vegetation. Presentation uses its own seeded RNG and never changes sim state.
 - `LightingSettings` configures the sun, AgX display response, ambient light,
   shadows and occlusion. `AtmosphereSystem` drives time, sky, clouds, rain,
-  mist, lightning, audio, wetness, and wind. Toon materials also receive the
+  mist, lightning, audio, wetness, and wind. Village mesh materials also receive the
   imported cloud-shadow and wet-surface functions.
 - The base adaptation inside the imported modules is the optional
   `AtmosphereSystem.weather_focus`: orthographic rain and local weather use
@@ -48,10 +48,11 @@ The import manifest still lists them as a record of the original copy, and
   shading and per-material cloud scale, density bands and tint. Imported
   location materials retain their original defaults. `VillageAtmosphere`
   applies the village's lighting profile before the normal sky/weather update.
-- The village renders smoothly at full resolution. The original 32-colour
-  lookup, screen outline, and dithered toon light were disconnected so the
-  imported colors render directly, and the optional pixel view is being
-  removed (see [DESIGN.md](DESIGN.md#art-direction)). Old terrain, buildings,
+- The village renders smoothly at full resolution with antialiasing. The
+  original 32-colour lookup, screen outline, and dithered toon light were
+  disconnected so the imported colors render directly, and have since been
+  deleted along with the optional pixel view (see
+  [DESIGN.md](DESIGN.md#art-direction)). Old terrain, buildings,
   roads, carriers, goods, and HUD colors now use the imported material families.
   The default is a fixed clear
   afternoon at 16:00; restart restores it. Weather animation runs in real time,

@@ -40,10 +40,12 @@ func run(t) -> void:
 	for village in [a,b]:
 		Scenario.starter(village)
 		t.check(village.place("forester",Vector2i(26,18)+Scenario.offset(village)),"Forester fits beside the eastern road")
+		# Spend founding logs below the storehouse limit, so harvested logs are hauled in.
+		village._pay({"logs":50})
 	a.step(1300)
 	for batch in 130: b.step(10)
 	t.check(a.snapshot() == b.snapshot(),"Forestry and regrowth are deterministic across tick batches")
-	t.check(a.produced.get("logs",0) > 0 and a.stock("logs") > 69 and not a.grid.saplings.is_empty(),"Carriers collect actual harvested logs while foresters replace trees")
+	t.check(a.produced.get("logs",0) > 0 and a.stock("logs") > 19 and not a.grid.saplings.is_empty(),"Carriers collect actual harvested logs while foresters replace trees")
 	var state: Dictionary = a.snapshot()
 	state.trees.clear()
 	state.saplings.clear()
@@ -132,6 +134,7 @@ func _obstacles(t) -> void:
 	cliff.step(65)
 	t.check(cliff.grid.trees.has(tree),"Cliffs block forestry access")
 	cliff.grid.ramps[cliff.site.index(Vector2i(8,5))] = 1
+	cliff.grid.changed()
 	cliff.step(65)
 	t.check(not cliff.grid.trees.has(tree),"Ramps provide access to plateau timber")
 	var invalid = fixture([tree])

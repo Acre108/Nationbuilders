@@ -2,18 +2,17 @@
 
 > **Gate:** One chain playable: grain → flour → bread end to end, with carriers, storage and one house upgrade.
 
-## Where we are (reviewed 11 Oct 2026, evening)
+## Where we are (reviewed 14 Oct 2026)
 
 The chain works in short runs and the codebase has grown well beyond the gate:
 
-- **Engine: undecided.** Commit `a686133` pinned Godot 4.3 stable. The current working tree runs on **4.7.2** (Forward+), because the imported SpacesOS lighting and atmosphere need its newer API; 4.3 cannot run them. See work item 0.
 - **Tests:** current check counts and reference-seed timings (promotion and first bread, both around 23–36 simulated seconds) are in [VALIDATION.md](VALIDATION.md).
-- **Since the gate brief:** worker stop/resume, house pantries stocked from the closest supply, happiness, and money in silver with chain-derived prices, wages, a 10% tax and a treasury that pays for construction (see [VILLAGERS.md](VILLAGERS.md)), building rotation, terrain relief and site packages ([WORLD_MAP.md](WORLD_MAP.md) phase 1), the 100 × 100 default map, the SpacesOS environment port, the village art pass and the medieval building kit.
+- **Since the gate brief:** worker stop/resume, house pantries stocked from the closest supply, happiness, and money in silver with chain-derived prices, wages, a 10% tax and a treasury that pays for construction (see [VILLAGERS.md](VILLAGERS.md)), building rotation, terrain relief and site packages ([WORLD_MAP.md](WORLD_MAP.md) phase 1), the 100 × 100 default map, the SpacesOS environment port, the village art pass, the medieval building kit and the hex world map ([PLAN-world-map.md](PLAN-world-map.md)).
 - The sim is still pure, data-driven and deterministic, with conservation checks for every good. The view only sends commands.
 
-It is not ready to sign off. The storage blocker below is still open, nobody has recorded a manual playtest, and most of the work since commit `c7c0fee` is uncommitted.
+It is not ready to sign off: nobody has recorded a manual playtest, household savings still drain over a long run at default prices (see item 1), and the hex-village work since checkpoint `060104f` is uncommitted on `wip/overnight-2026-10-12`.
 
-### Blocker: the storehouse clogs and starves the chain
+### Blocker (fixed 14 Oct): the storehouse clogs and starves the chain
 
 The test suite only checks 5 minutes. A 60-minute headless run before money was added of the starter village (seed 73, mill and bakery placed at promotion) gives:
 
@@ -34,16 +33,24 @@ The test suite only checks 5 minutes. A 60-minute headless run before money was 
 ### 0. Baseline
 - [x] `git init` and a first commit. `.gitignore` excludes `.godot/`, `.tools/` and `artifacts/`.
 - [x] Delete the stale failing logs, the duplicate root `DESIGN.md` and `.tools/`.
-- [ ] Settle the engine. Either keep **4.7.2** and the SpacesOS environment, or return to **4.3** and drop or rework the environment port. Until this is decided, nobody re-pins either way.
 - [x] Remove unused SpacesOS imports: `assets/town`, `assets/props`, `content/furniture` and `content/furniture_overrides`.
-- [ ] Configure Git LFS for `*.glb`, `*.png`, `*.wav` and `*.blend` (`assets/` is about 177 MB), then commit the outstanding work in logical chunks: environment port, art and buildings, sim and HUD, world map.
+- [x] Configure Git LFS for `*.glb`, `*.png`, `*.wav`, `*.blend`, `*.webp` and `*.jpg`, and commit the outstanding work (checkpoint `060104f`).
+- [ ] Commit the hex-village work that followed the checkpoint.
 
 ### 1. Fix storage saturation (1–2 days), the blocker
-- [ ] Stop carriers hauling surplus to a storehouse once it holds enough of a good. The simplest version is a per-good storage limit in `buildings.json`, for example a default of 40, checked in `_try_job` for `inventory` targets. Producers then block at "output full", which matches the existing rules and keeps the logic data-driven.
-- [ ] Make sure goods houses need (bread first) can always be stored: either reserve space for them, or apply the limit only to non-need goods. Pick whichever keeps `village_sim.gd` simpler.
-- [ ] Add a sim test with **two houses**: the starter village plus the chain stays at Tier 2 for 60 simulated minutes, stored bread recovers above zero, and construction logs don't fall. It must fail on the current code before the fix.
-- [ ] Re-run the soak with money in place first: households that cannot afford goods change the flows, so re-measure before choosing the fix.
-- [ ] Re-run the conservation and determinism tests.
+- [x] Stop carriers hauling surplus to a storehouse once it holds enough of a good. The storehouse row in `buildings.json` has `"good_limit": 30`. `_find_job` checks it where carriers haul a producer's output to their storehouse, so producers then block at "output full". Pantry clean-outs and cargo returned after a cancelled job are exempt: they must always land somewhere.
+- [x] Make sure goods houses need (bread first) can always be stored. Content validation requires `good_limit` × goods ≤ `storage_capacity` (30 × 6 = 180), so every good keeps room for its full limit and `village_sim.gd` needs no special case. Water was the clog, and it is itself a need, so limiting only non-need goods would not have fixed it. One caveat: founding stock above the limit (about 50 logs and 36 berries) can crowd other goods until it is used up.
+- [x] Add a sim test with **two houses**: `tests/test_logistics.gd` runs the starter plus the chain, a second house and a forester for 60 simulated minutes. Both houses stay Villagers throughout, no good is ever crowded out of the storehouse, and logs hold steady. On the old code it fails: 32 minutes below Villagers, 44 minutes with the storehouse full, and logs down to 8. It differs from the brief in three ways:
+  - It places a **forester**. The starter woodcutter clears every reachable tree by minute 3, so logs fall without one whatever storage does.
+  - It sets the **retail markup to 0**, so household budgets cannot decide a logistics test (see the money finding below).
+  - It drops **"stored bread recovers above zero"**. With money in place this depends on producers' working capital, not on storage space.
+- [x] Re-run the soak with money in place: `tools/soak_village.gd` (two houses, a forester, seed 73). Before the fix, and without a forester, the storehouse is full by minute 6, logs reach 0 by minute 15 and both houses fall back to Settlers by minute 30. After it, with the forester, every good settles at 30 and logs never fall below 30. The remaining failure is money, covered in [VILLAGERS.md](VILLAGERS.md) §5.5:
+  - At 25% markup, households run out of silver around minute 33 and fall back to Settlers.
+  - At the new 10% default, both houses stay Villagers for the hour. But their savings fall from about 3.5 g to about 1 g by minute 60. In a 120-minute run both houses are down to 5 s and "cannot afford logs" by minute 90 (VILLAGERS.md §5.5).
+  - At 0% markup, both houses stay Villagers for the hour. But the forester's pay drains the treasury to almost nothing, producers end with no silver, the bakery bakes only to order, and stored bread stays at 0.
+- [x] Re-run the conservation and determinism tests. They pass, and the long-run test also checks that cached routes and reservations match a fresh search.
+
+An earlier fix for the same freeze is on the unmerged `overnight-integration` branch (`491f8c2`): a `stock_limit` of 30, a "storehouse full" status, a starter forester and route caches. **Decided 14 Oct: keep this branch's fix.** `491f8c2` is superseded and should not be merged. Its "storehouse full" status is still worth reusing for item 2.
 
 ### 2. Make the cause visible (½ day)
 - [ ] When a producer's output can't be hauled because storage is full, show "storehouse full" instead of "output full".
@@ -68,8 +75,14 @@ The gate says "playable", but every recorded run uses scripted coordinates or th
 
 These don't block M1, but they will matter soon:
 
-- **Simulation performance.** The 60-minute soak above took about 3.5 ms per tick with 7 buildings. Houses and idle carriers search routes every tick, and `_reserved()` scans every carrier on each call. At 20–40 buildings and 3× speed this is likely to stutter. Profile, then cache routes per road revision and index reservations.
-- **No goals, failure state, seasons, Tier 3 or save/load.** Week 7 needs all of these ("hard, fun run… harsh sites sometimes fail"). Snapshots already capture all state, so save/load needs a loader rather than new state.
+- **Simulation performance: done 14 Oct.** Each speed-up is listed with the cost it removed:
+  - Road frontage and route distances are cached per road revision. A* now runs only for the paths carriers actually walk.
+  - Reservations are indexed by building slot, instead of `_reserved()` scanning every carrier on each call.
+  - A carrier job search that found nothing is not repeated in the same tick until some job changes.
+  - Suppliers a buyer cannot afford are skipped before routing.
+  - A forestry search that found no site is not repeated until the land, roads or claims change.
+
+  Mean tick cost (`tools/bench_village.gd --sim-only`): the starter fell from 4.8 ms to 0.10 ms, and a 40-building town from 70 ms to 3.1 ms, with p99 from 259 ms to 11 ms. Full snapshots are identical to the uncached code over 6 simulated minutes in four scenarios, including road cuts, demolition and stopped workers. Most of the town's remaining 3 ms is job searches; per-good supply lists are the next step if 3× speed stutters in play.
+- **No goals, failure state, seasons or Tier 3.** Week 7 needs all of these ("hard, fun run… harsh sites sometimes fail"). Save/load now exists through campaign saves ([PLAN-world-map.md](PLAN-world-map.md) phase C).
 - **Difficulty.** Reaching bread takes 36 seconds and needs no decisions. Week 7 needs real tension: finite deposits, worker scarcity and costs that bite.
-- **Happiness has no effect yet.** See the open questions in [VILLAGERS.md](VILLAGERS.md) §5.
-- **Pixel mode removal.** Smooth full-resolution rendering is the long-term look (see [DESIGN.md](DESIGN.md#art-direction)). The optional pixel view, its disconnected palette, outline and toon shaders, and the pixel-specific view and art checks are to be removed.
+- **Happiness has no effect yet.** See the open questions in [VILLAGERS.md](VILLAGERS.md) §6.

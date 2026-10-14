@@ -17,7 +17,7 @@ static func work(sim, building) -> void:
 	var usable: bool = sim.grid.trees.has(cell) if cutting else sim.grid.can_plant(cell)
 	if not usable or sim.grid.occupied.has(cell) or sim.grid.roads.has(cell):
 		_release(building)
-		building.work_cell = _find_site(sim,building,cutting)
+		building.work_cell = _search(sim,building,cutting)
 		cell = building.work_cell
 	if cell.x < 0:
 		building.status = "no mature trees nearby" if cutting else "no planting space nearby"
@@ -38,11 +38,27 @@ static func _release(building) -> void:
 	building.progress = 0
 	building.work_cell = Vector2i(-1,-1)
 
-static func _find_site(sim, building, cutting: bool) -> Vector2i:
-	var claimed: Dictionary = {}
+## A failed search is not repeated until the land, roads, buildings or another
+## worker's claimed site changes: only those can change its answer.
+static func _search(sim, building, cutting: bool) -> Vector2i:
+	var claims: Array[Vector2i] = []
 	for other in sim.buildings.values():
 		if other != building and other.work_cell.x >= 0:
-			claimed[other.work_cell] = true
+			claims.append(other.work_cell)
+	var key := [sim.grid.revision, sim.grid.forest_revision, claims]
+	if sim._forestry_misses.get(building.uid) == key:
+		return Vector2i(-1,-1)
+	var site := _find_site(sim,building,cutting,claims)
+	if site.x < 0:
+		sim._forestry_misses[building.uid] = key
+	else:
+		sim._forestry_misses.erase(building.uid)
+	return site
+
+static func _find_site(sim, building, cutting: bool, claims: Array[Vector2i]) -> Vector2i:
+	var claimed: Dictionary = {}
+	for cell in claims:
+		claimed[cell] = true
 	# Flood over walkable land, beginning at the building's perimeter. Water,
 	# other buildings, cliffs and the village boundary block forestry workers.
 	var frontier: Array[Vector2i] = building.cells()

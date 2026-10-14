@@ -79,9 +79,12 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant) ->
 		if row.get("outputs") is Dictionary and _total(row.outputs) > row.get("output_capacity", 0):
 			errors.append(prefix + "recipe exceeds output capacity")
 		if row.get("kind") == "storehouse":
-			for field in ["storage_capacity", "carriers"]:
+			for field in ["storage_capacity", "good_limit", "carriers"]:
 				if not _integer(row.get(field), 1):
 					errors.append(prefix + "invalid " + field)
+			# Every good keeps room for its full limit, so surplus never crowds out bread.
+			if _integer(row.get("good_limit"), 1) and _integer(row.get("storage_capacity"), 1) and int(row.good_limit) * goods.size() > int(row.storage_capacity):
+				errors.append(prefix + "good_limit × %d goods exceeds storage_capacity" % goods.size())
 		if not row.get("terrain") is Array or row.get("terrain", []).is_empty():
 			errors.append(prefix + "terrain must be a nonempty array")
 		else:

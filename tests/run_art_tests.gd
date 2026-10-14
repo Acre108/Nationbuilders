@@ -16,15 +16,12 @@ func check(condition: bool, message: String) -> void:
 func _run() -> void:
 	view = load("res://view/village_view.tscn").instantiate()
 	root.add_child(view)
-	# Keep art comparisons at their historical native resolution; the playable
-	# scene now starts in smooth mode, covered by the view/input suite.
-	view._set_pixel_effect(true)
 	view._set_speed(0)
 	view.atmosphere.set_process(false)
 	view.foliage.set_process(false)
 	var original: Dictionary = view.sim.snapshot()
 	check(view.camera.focus == Vector3(view.sim.site.founding_spot.x+5,0,view.sim.site.founding_spot.y-3) and view.camera.zoom_size == 22.0 and view.camera.quarter_turn == 0,"Camera frames the central clearing")
-	check(view.pixel_viewport.size == Vector2i(640,360) and view.display.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST,"Native pixel resolution preserved")
+	check(view.pixel_viewport.size == Vector2i(1280,720) and view.pixel_viewport.msaa_3d == Viewport.MSAA_4X,"Art is measured at full resolution with antialiasing")
 	check(not view.atmosphere.world_environment.environment.glow_enabled,"Village bloom disabled")
 	var sun_direction: Vector3 = view.atmosphere.sun.basis.z
 	check(sun_direction.dot(view.camera.basis.x) < -0.3 and sun_direction.dot(view.camera.basis.y) > 0.3,"Sun projects from the upper-left of the original screen")
@@ -36,8 +33,10 @@ func _run() -> void:
 			var terrain: String = view.sim.grid.terrain_at(Vector2i(x,y))
 			if terrain in ["forest","rock"]: expected_plants += 1
 	check(view.foliage.plants.size() == expected_plants,"Tree and rock count matches original scatter")
+	var plants_in_place := true
 	for cell in view.foliage.plants:
-		check(view.foliage.plants[cell].position == Vector3(cell.x+0.5,0.02,cell.y+0.5),"Original vegetation position retained")
+		plants_in_place = plants_in_place and view.foliage.plants[cell].position == Vector3(cell.x+0.5,0.02,cell.y+0.5)
+	check(plants_in_place,"Original vegetation positions retained")
 	var tuft_buffer: PackedFloat32Array = view.foliage.grass.multimesh.buffer.duplicate()
 	var targets: Array[Vector2i] = []
 	for i in view.foliage.grass.multimesh.instance_count:
@@ -70,12 +69,12 @@ func _run() -> void:
 	RenderingServer.global_shader_parameter_set("village_wind_time",view.atmosphere.wind_time)
 	check(before_cloud != view.atmosphere._cloud_offset,"Cloud field drifts over environmental time")
 	var changed := 0
-	for y in range(80,280):
-		for x in range(140,500):
+	for y in range(160,560):
+		for x in range(280,1000):
 			var difference := image_before.get_pixel(x,y)-image_after.get_pixel(x,y)
 			if absf(difference.r)+absf(difference.g)+absf(difference.b) > 0.03: changed += 1
-	check(changed > 100,"Large cloud shadows change rendered clearing light")
-	print("CLOUD: %d native clearing pixels changed after 40 environmental seconds" % changed)
+	check(changed > 400,"Large cloud shadows change rendered clearing light")
+	print("CLOUD: %d clearing pixels changed after 40 environmental seconds" % changed)
 	check(view.sim.snapshot() == paused_snapshot,"Atmospheric time leaves paused simulation and RNG untouched")
 	view.foliage._process(4.0)
 	view.foliage.ambience_time = 4.0
@@ -88,7 +87,9 @@ func _run() -> void:
 	view.atmosphere._tick(0.0)
 	view.foliage._process(0.125)
 	check(view.atmosphere.cloud_shadow == 0.0,"Cloud shadows fade at night")
-	for mote in view.foliage.motes: check(not mote.visible,"Golden seed motes hidden at night")
+	var motes_hidden := true
+	for mote in view.foliage.motes: motes_hidden = motes_hidden and not mote.visible
+	check(motes_hidden,"Golden seed motes hidden at night")
 	await capture("art-night")
 	view._restart()
 	view._set_speed(0)
@@ -100,16 +101,16 @@ func _run() -> void:
 	view.sim.step(500)
 	view._sync_view()
 	view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
-	var final_image := await capture("atmosphere-after-native")
+	var final_image := await capture("atmosphere-after-world")
 	var golden_pixels := 0
 	var clipped_white := 0
-	for y in range(20,340):
-		for x in range(20,620):
+	for y in range(40,680):
+		for x in range(40,1240):
 			var colour := final_image.get_pixel(x,y)
 			if colour.r > 0.52 and colour.g > 0.43 and colour.b < colour.g*0.70 and colour.r >= colour.g*0.90: golden_pixels += 1
 			if colour.r > 0.99 and colour.g > 0.99 and colour.b > 0.99: clipped_white += 1
-	check(golden_pixels > 8000,"Reference pass produces broad golden light, beyond a few roof highlights")
-	check(clipped_white < 1000,"Brighter palette retains highlight detail without broad white clipping")
+	check(golden_pixels > 32000,"Reference pass produces broad golden light, beyond a few roof highlights")
+	check(clipped_white < 4000,"Brighter palette retains highlight detail without broad white clipping")
 	print("PALETTE: %d golden pixels; %d clipped white pixels" % [golden_pixels,clipped_white])
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/atmosphere-after.png")
@@ -136,14 +137,14 @@ func _check_tree_motion() -> void:
 		var top_pixel: Vector2 = view.camera.unproject_position(plant.position+Vector3.UP*plant.mesh.get_aabb().size.y)
 		var span := int(absf(root_pixel.y-top_pixel.y)*0.65)
 		var region := Rect2i(Vector2i(int(top_pixel.x)-span,int(top_pixel.y)),Vector2i(span*2,int(root_pixel.y-top_pixel.y)))
-		region = region.intersection(Rect2i(0,0,640,360))
+		region = region.intersection(Rect2i(Vector2i.ZERO,view.pixel_viewport.size))
 		if region.has_area(): tree_regions.append(region)
 	var still := await capture("trees-wind-0")
 	view.atmosphere.wind_time = 4.0
 	RenderingServer.global_shader_parameter_set("village_wind_time",4.0)
 	var breezy := await capture("trees-wind-4")
 	var moving := _changed_tree_pixels(still,breezy,tree_regions)
-	check(moving > 300,"Default breeze visibly moves rendered crowns with clouds and lighting frozen")
+	check(moving > 1300,"Default breeze visibly moves rendered crowns with clouds and lighting frozen")
 	print("TREE WIND: %d changed crown pixels after four wind seconds" % moving)
 	view.atmosphere.set_wind(view.atmosphere.wind_from_degrees(),0.0,1.0)
 	var calm := await capture("trees-calm-4")

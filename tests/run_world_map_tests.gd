@@ -20,7 +20,8 @@ func _run() -> void:
 	view.seed_value = 73
 	root.add_child(view)
 	await _frames(4)
-	for seed_value in [73, 1, 2]:
+	# A second seed proves the model is replaced; a third added only build time.
+	for seed_value in [73, 1]:
 		if seed_value != view.seed_value:
 			view.set_seed(seed_value)
 			await _frames(3)

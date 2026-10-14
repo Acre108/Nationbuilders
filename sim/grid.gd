@@ -25,6 +25,12 @@ var stumps: Dictionary = {}
 var forest_revision := 0
 var settlement_clearance := Rect2i()
 var _path_cache: Dictionary = {}
+## Derived per road revision: each building's road frontage, and the road
+## distance from its frontage to every reachable road cell.
+var _cache_revision := -1
+var _access_cache: Dictionary = {}
+var _fields: Dictionary = {}
+var _networks: Dictionary = {}
 
 func _init(site) -> void:
 	width = site.width
@@ -111,18 +117,96 @@ func passable(a: Vector2i, b: Vector2i) -> bool:
 		return false
 	return is_ramp(a if difference > 0 else b)
 
+## Call after any change to roads, buildings or relief: it invalidates routes.
 func changed() -> void:
 	revision += 1
 	_path_cache.clear()
 
+func _sync_caches() -> void:
+	if _cache_revision != revision:
+		_cache_revision = revision
+		_access_cache.clear()
+		_fields.clear()
+		_networks.clear()
+
+## The connected road network a carrier at this cell walks on, or -1 where no
+## route can start. Cells on one network reach exactly the same buildings.
+func network(cell: Vector2i) -> int:
+	if not in_reach(cell) or not roads.has(cell):
+		return -1
+	_sync_caches()
+	if _networks.is_empty():
+		var id := 0
+		for start in roads:
+			if _networks.has(start):
+				continue
+			id += 1
+			_networks[start] = id
+			var frontier: Array[Vector2i] = [start]
+			while not frontier.is_empty():
+				var current: Vector2i = frontier.pop_back()
+				for direction in DIRECTIONS:
+					var neighbor: Vector2i = current + direction
+					if not _networks.has(neighbor) and roads.has(neighbor) and passable(current, neighbor):
+						_networks[neighbor] = id
+						frontier.append(neighbor)
+	return int(_networks[cell])
+
+## Road cells beside the building that a carrier can step from. The result is
+## shared with the cache, so callers must not modify it.
 func access(building) -> Array[Vector2i]:
+	_sync_caches()
+	var cached = _access_cache.get(building.uid)
+	if cached != null:
+		return cached
 	var result: Array[Vector2i] = []
 	for tile in building.cells():
 		for direction in DIRECTIONS:
 			var neighbor: Vector2i = tile + direction
 			if roads.has(neighbor) and passable(tile, neighbor) and neighbor not in result:
 				result.append(neighbor)
+	_access_cache[building.uid] = result
 	return result
+
+## The length in cells of route_between(a, b), or -1 when no road joins them.
+func distance(a, b) -> int:
+	var field := _field(a)
+	var best := -1
+	for goal in access(b):
+		if in_reach(goal) and field.has(goal):
+			var cells: int = int(field[goal]) + 1
+			if best < 0 or cells < best:
+				best = cells
+	return best
+
+## Whether route_to(cell, access(building)) would find a route.
+func reaches(cell: Vector2i, building) -> bool:
+	return in_reach(cell) and roads.has(cell) and _field(building).has(cell)
+
+## Steps from the building's frontage to each road cell, by breadth-first
+## search. Steps are symmetric, so this also measures routes towards it.
+func _field(building) -> Dictionary:
+	_sync_caches()
+	var cached = _fields.get(building.uid)
+	if cached != null:
+		return cached
+	var field := {}
+	var frontier: Array[Vector2i] = []
+	for start in access(building):
+		if in_reach(start):
+			field[start] = 0
+			frontier.append(start)
+	var index := 0
+	while index < frontier.size():
+		var current: Vector2i = frontier[index]
+		index += 1
+		for direction in DIRECTIONS:
+			var neighbor: Vector2i = current + direction
+			if not field.has(neighbor) and roads.has(neighbor) and passable(current, neighbor):
+				field[neighbor] = int(field[current]) + 1
+				frontier.append(neighbor)
+	_fields[building.uid] = field
+	return field
 
 func route_between(a, b) -> Array[Vector2i]:
 	var best: Array[Vector2i] = []
