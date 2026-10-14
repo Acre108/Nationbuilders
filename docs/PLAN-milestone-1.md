@@ -63,6 +63,13 @@ The gate says "playable", but every recorded run uses scripted coordinates or th
 - [ ] Record the time to first bread, any confusion and any bugs in [VALIDATION.md](VALIDATION.md).
 - [ ] Fix anything that blocks a first-time player. Smaller issues go on the week 7 list.
 
+A scripted input playtest on 15 Oct found three candidates (see [VALIDATION.md](VALIDATION.md#scripted-input-playtest-15-october-2026)):
+- a forester near the centre never plants, because the settlement clearing is protected, so logs run out around minute 14;
+- the bakery stalls with no silver while the storehouse holds flour;
+- forester and chapel upkeep drain the treasury at 15% tax.
+
+The person-led playtest should confirm which of these actually block play.
+
 ### 4. Sign-off
 - [x] All suites green, including the new long-run stability test (`tools/run_tests.ps1 -Full`, 15 Oct).
 - [ ] Playtest notes recorded.

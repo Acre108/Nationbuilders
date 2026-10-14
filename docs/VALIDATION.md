@@ -21,6 +21,31 @@ Every Milestone 1 work item is done except the manual playtest
   (`godot --path . res://view/village_view.tscn -- --render-smoke`): the
   starter plus mill and bakery, 80 simulated seconds, with 8 bread produced.
 
+### Scripted input playtest (15 October 2026)
+
+This is not the person-led playtest below. The other development session ran
+`tools/playtest_village.gd`, which plays through real input only: toolbar,
+build menu, map clicks, inspectors and the Treasury panel. It places
+buildings on spots touching a road, as a player reading the ghost would.
+Seed 73 at 3× speed; captures are in `artifacts/playtest/`.
+
+- First Villager house at 0:22, first bread at 0:36. By then it had built
+  berry bushes, a forester, a mill, a bakery, a chapel and a second house.
+  Both houses were 100% happy from minute 1 to 13.
+- **A forester near the centre never plants.** It reports "no planting space
+  nearby" all game, because the settlement clearing is kept open. The
+  woodcutter then runs out of trees and logs reach 0 at about minute 14.
+  Morale falls to 83%, and workplaces slow to 91% speed.
+- **The bakery stalls on money.** It shows "missing input flour" with 0
+  silver while the storehouse holds 30 flour, because producers' purses run
+  dry.
+- **The treasury drains.** It falls from 3.84 g to 0.28 g in 15 minutes,
+  with forester and chapel upkeep at 15% tax.
+
+These are candidates for item 3's "fix anything that blocks a first-time
+player". The forester case is the one most likely to catch a new player,
+because nothing explains why a forester in the clearing does nothing.
+
 ### Playtest (to record)
 
 One person plays from a fresh start to Villagers and bread using only the
