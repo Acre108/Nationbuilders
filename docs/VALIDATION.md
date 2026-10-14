@@ -1,5 +1,36 @@
 # Milestone 1 validation
 
+## Sign-off (15 October 2026)
+
+Every Milestone 1 work item is done except the manual playtest
+([PLAN-milestone-1.md](PLAN-milestone-1.md) item 3). The tag
+`m1-first-bread` follows the playtest notes below.
+
+- **Full tier green.** On 15 October, `tools/run_tests.ps1 -Full` passed every
+  suite with zero failures: headless 547, site generation 100, view 116,
+  campaign view 47, world map 119, generated sites 33, forestry view 19,
+  art 33, buildings 31 and environment 18 checks. This includes the hour-long
+  two-house run, and the carriers-as-jobs, services and happiness changes
+  from VILLAGERS.md.
+- **Storage is visible.** A producer whose goods a storehouse refuses
+  reports "storehouse full" or "storehouse has enough <good>" instead of
+  "output full". An always-visible bar beside the gold counter shows total
+  storehouse fill and stored bread, water and logs. The view suite checks the
+  bar's contents and placement; the logistics test checks both statuses.
+- **Screenshot.** [first-bread.png](first-bread.png) is the render smoke run
+  (`godot --path . res://view/village_view.tscn -- --render-smoke`): the
+  starter plus mill and bakery, 80 simulated seconds, with 8 bread produced.
+
+### Playtest (to record)
+
+One person plays from a fresh start to Villagers and bread using only the
+toolbar, then keeps playing for 15+ minutes. Record:
+
+- date, and who played;
+- time to the first Villager house and to first bread;
+- anything confusing, and where the player got stuck;
+- bugs found, with what blocked a first-time player fixed before tagging.
+
 ## Current results (14 October 2026)
 
 Run with `tools/run_tests.ps1 -Full` (Godot 4.7.2 Forward+ on Windows /

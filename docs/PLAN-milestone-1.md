@@ -2,7 +2,7 @@
 
 > **Gate:** One chain playable: grain → flour → bread end to end, with carriers, storage and one house upgrade.
 
-## Where we are (reviewed 14 Oct 2026)
+## Where we are (reviewed 15 Oct 2026)
 
 The chain works in short runs and the codebase has grown well beyond the gate:
 
@@ -10,7 +10,7 @@ The chain works in short runs and the codebase has grown well beyond the gate:
 - **Since the gate brief:** worker stop/resume, house pantries stocked from the closest supply, happiness, and money in silver with chain-derived prices, wages, a 10% tax and a treasury that pays for construction (see [VILLAGERS.md](VILLAGERS.md)), building rotation, terrain relief and site packages ([WORLD_MAP.md](WORLD_MAP.md) phase 1), the 100 × 100 default map, the SpacesOS environment port, the village art pass, the medieval building kit and the hex world map ([PLAN-world-map.md](PLAN-world-map.md)).
 - The sim is still pure, data-driven and deterministic, with conservation checks for every good. The view only sends commands.
 
-It is not ready to sign off: nobody has recorded a manual playtest, household savings still drain over a long run at default prices (see item 1), and the hex-village work since checkpoint `060104f` is uncommitted on `wip/overnight-2026-10-12`.
+**Status: every work item is done except the manual playtest (item 3).** Tag `m1-first-bread` once its notes are recorded. Household savings still drain over runs longer than an hour at default prices (see item 1); that is tracked in [VILLAGERS.md](VILLAGERS.md) §5.6 and does not block the gate.
 
 ### Blocker (fixed 14 Oct): the storehouse clogs and starves the chain
 
@@ -35,7 +35,7 @@ The test suite only checks 5 minutes. A 60-minute headless run before money was 
 - [x] Delete the stale failing logs, the duplicate root `DESIGN.md` and `.tools/`.
 - [x] Remove unused SpacesOS imports: `assets/town`, `assets/props`, `content/furniture` and `content/furniture_overrides`.
 - [x] Configure Git LFS for `*.glb`, `*.png`, `*.wav`, `*.blend`, `*.webp` and `*.jpg`, and commit the outstanding work (checkpoint `060104f`).
-- [ ] Commit the hex-village work that followed the checkpoint.
+- [x] Commit the hex-village work that followed the checkpoint (`4e74c38`, 14 Oct).
 
 ### 1. Fix storage saturation (1–2 days), the blocker
 - [x] Stop carriers hauling surplus to a storehouse once it holds enough of a good. The storehouse row in `buildings.json` has `"good_limit": 30`. `_find_job` checks it where carriers haul a producer's output to their storehouse, so producers then block at "output full". Pantry clean-outs and cargo returned after a cancelled job are exempt: they must always land somewhere.
@@ -53,8 +53,8 @@ The test suite only checks 5 minutes. A 60-minute headless run before money was 
 An earlier fix for the same freeze is on the unmerged `overnight-integration` branch (`491f8c2`): a `stock_limit` of 30, a "storehouse full" status, a starter forester and route caches. **Decided 14 Oct: keep this branch's fix.** `491f8c2` is superseded and should not be merged. Its "storehouse full" status is still worth reusing for item 2.
 
 ### 2. Make the cause visible (½ day)
-- [ ] When a producer's output can't be hauled because storage is full, show "storehouse full" instead of "output full".
-- [ ] Show storehouse fill (`n / 180`) and key stocks in a small always-visible bar. Global resource counters are currently hidden, and the fill only appears in the storehouse inspector.
+- [x] When a producer's output can't be hauled because storage refuses it, the status says "storehouse full", or "storehouse has enough <good>" when the per-good limit stopped it, instead of "output full". A producer with no road to a storehouse still says "output full".
+- [x] Show storehouse fill (`n / 180`) and key stocks in a small always-visible bar. It sits beside the gold counter and shows total fill across storehouses, bread, water and logs.
 - [x] Inspector workers line: shows assigned / required, "stopped", and the village's idle workers.
 
 ### 3. Manual playtest without the helper (½ day)
@@ -64,9 +64,9 @@ The gate says "playable", but every recorded run uses scripted coordinates or th
 - [ ] Fix anything that blocks a first-time player. Smaller issues go on the week 7 list.
 
 ### 4. Sign-off
-- [ ] All suites green, including the new long-run stability test.
+- [x] All suites green, including the new long-run stability test (`tools/run_tests.ps1 -Full`, 15 Oct).
 - [ ] Playtest notes recorded.
-- [ ] [VALIDATION.md](VALIDATION.md) updated with the new numbers and a fresh `docs/first-bread.png`.
+- [x] [VALIDATION.md](VALIDATION.md) updated with the new numbers and a fresh `docs/first-bread.png`.
 - [ ] Tag the commit `m1-first-bread`.
 
 **Estimate: about 3 working days after the baseline commit.**

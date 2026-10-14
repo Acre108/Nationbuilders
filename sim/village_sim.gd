@@ -357,7 +357,7 @@ func _produce(building) -> void:
 		building.status = "no workers" if building.workers_enabled else "workers stopped"
 		return
 	if not building.output.fits(row.outputs):
-		building.status = "output full"
+		building.status = output_status(building)
 		return
 	if building.progress == 0:
 		for good in row.inputs:
@@ -494,6 +494,27 @@ func _find_job(carrier, home) -> Dictionary:
 			if not job.is_empty():
 				return job
 	return {}
+
+## Why a producer with a full output is waiting. "storehouse full" or
+## "storehouse has enough <good>" when every storehouse it reaches by road
+## refuses its goods; otherwise "output full".
+func output_status(building) -> String:
+	var enough := ""
+	var refused := false
+	for store in buildings.values():
+		if store.definition.kind != "storehouse" or grid.distance(building, store) < 0:
+			continue
+		for good in building.output.items:
+			if store.inventory.total() + _reserved(store.uid, "inventory", "", false) >= store.inventory.capacity:
+				refused = true
+			elif store.inventory.count(good) + _reserved(store.uid, "inventory", good, false) >= int(store.definition.good_limit):
+				refused = true
+				enough = good
+			else:
+				return "output full"
+	if not refused:
+		return "output full"
+	return "storehouse has enough " + enough if not enough.is_empty() else "storehouse full"
 
 func _wants(target, good: String, limit: int) -> bool:
 	if target.input.count(good) + _reserved(target.uid, "input", good, false) >= limit:

@@ -28,6 +28,10 @@ signal reserve_transfer_requested(pot: String, amount: int)
 ## Gold counter (top left), the one global counter on the play screen. It
 ## opens the Treasury panel: reserves, tax and the payday ledger.
 var treasury_button: Button
+## Always-visible storehouse fill and key stocks, beside the gold counter.
+var stock_bar: PanelContainer
+var stock_label: Label
+var stock_bar_gold := ""
 var treasury_menu: PanelContainer
 var close_treasury_button: Button
 var treasury_total: Label
@@ -245,6 +249,12 @@ func _ready() -> void:
 	map_button.pressed.connect(func(): world_map_requested.emit())
 	root.add_child(map_button)
 	_build_treasury_menu()
+	stock_bar = _panel()
+	stock_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stock_bar.tooltip_text = "Storehouse fill and key stocks"
+	stock_label = _label("", 15)
+	stock_bar.add_child(stock_label)
+	root.add_child(stock_bar)
 	_build_weather_menu()
 	options_menu = _panel()
 	options_menu.visible = false
@@ -931,6 +941,10 @@ func _layout() -> void:
 	options_menu.position = Vector2(screen.x-options_menu.size.x-18,78)
 	treasury_button.reset_size()
 	treasury_button.position = Vector2(18,18)
+	# The gold counter's width follows the amount, so the bar follows its edge.
+	stock_bar.reset_size()
+	stock_bar.size.y = treasury_button.size.y
+	stock_bar.position = Vector2(treasury_button.get_rect().end.x + 10, 18)
 	treasury_menu.reset_size()
 	treasury_menu.position = Vector2(18,78)
 	toast.reset_size()
@@ -984,6 +998,21 @@ func _menu_row(text: String, detail: String) -> Button:
 	button.add_child(label)
 	return button
 
+func _refresh_stock_bar(sim) -> void:
+	var held := 0
+	var capacity := 0
+	for building in sim.buildings.values():
+		if building.definition.kind == "storehouse":
+			held += building.inventory.total()
+			capacity += building.inventory.capacity
+	var fill := "Storehouse %d / %d" % [held, capacity] if capacity > 0 else "No storehouse"
+	var text := "%s    Bread %d    Water %d    Logs %d" % [fill, sim.stock("bread"), sim.stock("water"), sim.stock("logs")]
+	# Re-lay out when either the bar or the gold counter beside it changes width.
+	if stock_label.text != text or stock_bar_gold != treasury_button.text:
+		stock_label.text = text
+		stock_bar_gold = treasury_button.text
+		_layout()
+
 func blocks_mouse(point: Vector2) -> bool:
 	if run_card.visible: return true
 	if options_menu.visible:
@@ -991,13 +1020,14 @@ func blocks_mouse(point: Vector2) -> bool:
 	for button in [cog_button,sun_button,map_button,treasury_button]:
 		if button.get_global_rect().has_point(point):
 			return true
-	for panel in [bottom,build_menu,placement_card,side,toast,weather_menu,treasury_menu]:
+	for panel in [bottom,build_menu,placement_card,side,toast,weather_menu,treasury_menu,stock_bar]:
 		if panel.visible and panel.get_global_rect().has_point(point):
 			return true
 	return false
 
 func refresh(sim, selected_id: int, tool: String, rotation_quarters: int = 0) -> void:
 	_refresh_treasury(sim)
+	_refresh_stock_bar(sim)
 	demolish_button.button_pressed = tool == "demolish"
 	demolish_button.modulate = Color("d6c288") if tool == "demolish" else Color.WHITE
 	for id in build_buttons:

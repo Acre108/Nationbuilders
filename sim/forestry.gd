@@ -10,7 +10,7 @@ static func work(sim, building) -> void:
 		_release(building)
 		return
 	if not building.output.fits(row.outputs):
-		building.status = "output full"
+		building.status = sim.output_status(building)
 		_release(building)
 		return
 	var cell: Vector2i = building.work_cell

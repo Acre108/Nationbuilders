@@ -33,8 +33,12 @@ func _store_limit(t) -> void:
 	var well = _find(sim,"well")
 	sim.step(2500)
 	t.check(store.inventory.count("water") == limit, "Carriers stop hauling a good once the storehouse holds its limit: %d" % store.inventory.count("water"))
-	t.check(well.output.total() == well.output.capacity and well.status == "output full", "The producer then fills its output and stops")
+	t.check(well.output.total() == well.output.capacity and well.status == "storehouse has enough water", "The producer then fills its output and says why")
 	t.check(store.inventory.count("berries") == 36, "Founding stock above the limit stays stored")
+	store.inventory.take("water", 1)
+	store.inventory.add("flour", store.inventory.capacity - store.inventory.total())
+	sim.step(1)
+	t.check(well.status == "storehouse full", "A producer blocked by a full storehouse says so")
 
 ## The starter village with the full chain, a second house and a forester
 ## keeps both houses at Villagers for an hour without the storehouse clogging.
