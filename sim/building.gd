@@ -61,6 +61,17 @@ var owner_work := 0
 ## a member, the rival it may leave for. "" and 0 while no side leads.
 var pull_leader := ""
 var pull_streak := 0
+## A house's wages earned since the last payday by its family's work; the silver
+## itself waits in the payroll (labour.gd). Always 0 on other buildings.
+var earned := 0
+## A house's family, drawn once from its row's "family" ranges (labour.gd): its
+## working adults and its children. 0 adults means not drawn yet.
+var adults := 0
+var children := 0
+## Derived each tick by labour.gd, never saved: the house uid of each worker
+## this building employs, and a storehouse's storekeeper's house (-1 for none).
+var _crew: Array = []
+var _keeper := -1
 
 func _init(number: int, row: Dictionary, at: Vector2i, orientation: int = 0) -> void:
 	uid = number
@@ -87,7 +98,7 @@ func cells() -> Array[Vector2i]:
 	return result
 
 func snapshot() -> Dictionary:
-	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"priority":priority,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"happiness_history":happiness_history.duplicate(),"crew":crew,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration,"wages_paid":wages_paid,"owner":owner,"aligned":aligned,"owner_work":owner_work,"pull_leader":pull_leader,"pull_streak":pull_streak}
+	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"priority":priority,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"happiness_history":happiness_history.duplicate(),"crew":crew,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration,"wages_paid":wages_paid,"owner":owner,"aligned":aligned,"owner_work":owner_work,"pull_leader":pull_leader,"pull_streak":pull_streak,"earned":earned,"adults":adults,"children":children}
 
 ## Whether a faction may own a building of this row: never a service, a well
 ## or a road (docs/FACTIONS.md §5.1).
@@ -118,6 +129,9 @@ static func from_snapshot(state: Dictionary, content):
 	# A streak names a recruiting faction other than the house's own; no leader, no streak.
 	if result.pull_leader.is_empty() != (result.pull_streak == 0): return null
 	if not result.pull_leader.is_empty() and (result.definition.kind != "house" or result.pull_leader == result.aligned or not content.factions.has(result.pull_leader) or content.factions[result.pull_leader].get("recruits") != true): return null
+	# Only a family earns wages.
+	if result.earned > 0 and result.definition.kind != "house": return null
+	if (result.adults > 0 or result.children > 0) and result.definition.kind != "house": return null
 	if state.happiness_history.size() > HAPPINESS_CYCLES: return null
 	result.happiness_history = []
 	for value in state.happiness_history:

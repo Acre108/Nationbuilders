@@ -210,6 +210,10 @@ def sign(x,z,good):
         mesh('Tail',[(x+.08,.89,z+.29),(x+.15,.95,z+.29),(x+.15,.83,z+.29),
             (x+.08,.89,z+.30),(x+.15,.95,z+.30),(x+.15,.83,z+.30)],
             [(0,1,2),(3,5,4),(0,3,4,1),(1,4,5,2),(2,5,3,0)],'a9c1c6')
+    elif good == 'berries':
+        for dx,dy in ((-.05,0),(.05,0),(0,.06),(0,-.05)):
+            ellipsoid((x+dx,.89+dy,z+.29),(.04,.04,.02),'b23a4c')
+        beam((x,.95,z+.29),(x+.06,1.0,z+.29),.015,'5b7d45')
     elif good == 'meat':
         ellipsoid((x+.02,.88,z+.29),(.09,.065,.025),'b4574c')
         beam((x-.13,.92,z+.29),(x-.04,.89,z+.29),.03,'efe2c8')
@@ -241,6 +245,40 @@ def house(upper=False):
     else:
         box((-.68,.20,front+.22),(.21,.15,.25),'877356')
         ellipsoid((-.68,.33,front+.22),(.16,.12,.13),'768c59')
+
+
+def family_cottage(upper=False):
+    # A one-family cottage on a 2 x 1 plot (docs/PLAN-job-classes.md): a
+    # shallow cottage, shifted forward so it sits inside its single tile row.
+    old=len(PARTS)
+    front=cottage(width=1.55,depth=.58,height=1.25 if upper else .9,upper=upper)
+    chimney(x=.50,z=-.40,base=1.15 if upper else .95,height=.75)
+    for obj in PARTS[old:]: obj.location.y -= .18
+    box((-.62,.16,front+.04),(.20,.14,.14),'877356')
+    ellipsoid((-.62,.27,front+.04),(.15,.10,.08),'768c59')
+
+
+def master_house():
+    # The middle class's two-storey house on a 2 x 2 plot: plastered upper
+    # floor, slate roof, window boxes and a shop sign.
+    house(True)
+    sign(.62,.30,'bread')
+
+
+def inn():
+    # An inn on a 3 x 2 plot: a long two-storey house with a hanging sign,
+    # benches and a barrel by the door. Single workers lodge upstairs.
+    front=cottage(width=2.55,depth=1.15,height=1.45,plaster='e6c9a0',upper=True)
+    chimney(x=-.95,z=-.50,base=1.3,height=1.0)
+    chimney(x=.95,z=-.50,base=1.3,height=1.0)
+    window(.75,.85,front+.04)
+    window(-.95,.85,front+.04,shutters=False)
+    sign(1.05,front,'meat')
+    for x in (-.55,.40):
+        box((x,.22,front+.38),(.50,.06,.16),WOOD)
+        for dx in (-.20,.20): box((x+dx,.12,front+.38),(.05,.18,.14),WOOD)
+    cylinder((1.10,.17,front+.30),.14,.30,'8a6a44',12,top=.12)
+    for y in (.06,.26): cylinder((1.10,y,front+.30),.142,.022,IRON,12)
 
 
 def bakery():
@@ -596,6 +634,42 @@ def hunter():
     beam((-.75,.27,.58),(-.66,.30,.66),.02,'9aa3a3')
 
 
+def wild_berry_bush():
+    # A low bramble under the trees, about half a tile across. Its fruit is a
+    # separate "Berries" object so the game can hide it once picked.
+    # Clusters sit on the outside of the leaves, where they read from above.
+    for i in range(14):
+        angle=i*math.tau/14
+        r=.20+(i%3)*.025
+        ellipsoid((math.sin(angle)*r,.12+(i%3)*.06,math.cos(angle)*r),(.034,.034,.034),'c8304a' if i%3 else '8a2456')
+    for x,z in ((0,0),(.07,.05),(-.06,.06)):
+        ellipsoid((x,.33,z),(.034,.034,.034),'c8304a')
+    berries=join('Berries')
+    for i,(x,z,s) in enumerate(((0,0,.20),(.12,.06,.14),(-.11,.08,.13),(.04,-.12,.13))):
+        ellipsoid((x,.10+s*.35,z),(s,s*.75,s),'3f6234' if i%2 else '4f7340')
+    for x,z in ((-.05,.04),(.06,-.03)):
+        beam((x,0,z),(x*1.6,.12,z*1.6),.02,'5a4632')
+    return berries
+
+
+def forager():
+    # A gatherer's hut on a 2 x 2 plot: a small cottage, a bench of baskets,
+    # a herb-drying rack and a sign. Gathered berries are stock.
+    front=cottage(width=1.10,depth=.92,height=.86,plaster='cdb58e')
+    sign(.55,front,'berries')
+    for x in (-.72,-.20):
+        box((x,.60,.70),(.04,.60,.04),WOOD)
+    beam((-.74,.86,.70),(-.18,.86,.70),.03,WOOD)
+    for i in range(4):
+        x=-.68+i*.15
+        beam((x,.86,.70),(x,.70,.70),.01,'7a5a33')
+        ellipsoid((x,.67,.70),(.035,.06,.035),'7a8c4e' if i%2 else '8c6a3a')
+    box((.62,.28,-.66),(.46,.05,.20),WOOD)
+    for x in (.44,.80): box((x,.14,-.66),(.05,.26,.16),WOOD)
+    for x in (.50,.74):
+        basket((x,.30,-.66))
+
+
 def deer():
     # A red deer stag, head toward +X, about half a tile long. Legs, neck and
     # antlers are thin beams so it reads at village zoom.
@@ -757,15 +831,15 @@ import sys
 # Optional names after "--" export only those assets and leave the .blend alone:
 #   blender --background --python tools/build_medieval_assets.py -- chapel stock_berries
 ONLY = sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []
-for name, maker in [('house',house),('house_tier2',lambda:house(True)),('storehouse',storehouse),
+for name, maker in [('house',family_cottage),('house_tier2',lambda:family_cottage(True)),('master_house',master_house),('inn',inn),('storehouse',storehouse),
         ('farm',farm),('well',well),('woodcutter',woodcutter),('forester',forester),('mill',mill),('bakery',bakery),
         ('chapel',chapel),('berry_bushes',berry_bushes),('fisher',fisher),('woodshed',woodshed),
-        ('sawmill',sawmill),('pig_farm',pig_farm),('butcher',butcher),('hunter',hunter)]:
+        ('sawmill',sawmill),('pig_farm',pig_farm),('butcher',butcher),('hunter',hunter),('forager',forager)]:
     if not ONLY or name in ONLY: export(name,maker)
 for good in ('wheat','flour','water','logs','bread','berries','fish','meat','pigs','firewood','planks','crate'):
     if not ONLY or 'stock_'+good in ONLY: export('stock_'+good,lambda good=good:stock(good))
 # Game animals (docs/WILDLIFE.md), drawn by view/village_wildlife.gd.
-for name, maker in [('animal_deer',deer),('animal_boar',boar)]:
+for name, maker in [('animal_deer',deer),('animal_boar',boar),('wild_berry_bush',wild_berry_bush)]:
     if not ONLY or name in ONLY: export(name,maker)
 if ONLY: sys.exit(0)
 

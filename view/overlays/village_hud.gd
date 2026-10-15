@@ -3,6 +3,14 @@ const ContentDB = preload("res://sim/content_db.gd")
 const Building = preload("res://sim/building.gd")
 const Economy = preload("res://sim/economy.gd")
 const Needs = preload("res://sim/needs.gd")
+const FoodReport = preload("res://sim/food_report.gd")
+## The food overlay's key (view/food_overlay.gd, docs/WILDLIFE.md).
+const FOOD_LEGEND := "[b]Food overlay[/b]  [color=#868f7a]F7[/color]
+[color=#f2c75a]Fertile soil[/color]: fields work at full speed, half speed elsewhere
+[color=#dc3a55]Wild berries[/color]: larger marks hold more ripe fruit
+[color=#56a3e0]Fishing shore[/color]: water a fisher's hut can stand beside
+[color=#f3e6c4]Labels[/color]: deer and boar living in each range
+[color=#868f7a]Felling woods loses their game and berries.[/color]"
 signal tool_selected(id: String)
 signal rotation_requested
 signal deposits_toggled
@@ -33,6 +41,9 @@ signal offer_declined(faction: String)
 signal pledge_broken(pledge: String)
 signal sale_requested(faction: String)
 signal class_overlay_toggled
+signal food_overlay_toggled
+## The food balance button opened its breakdown; the view shows the overlay.
+signal food_menu_opened
 ## Gold counter (top left), the one global counter on the play screen. It
 ## opens the Treasury panel: reserves, tax and the payday ledger.
 var treasury_button: Button
@@ -124,6 +135,7 @@ var toast: PanelContainer
 var toast_label: Label
 var toast_seconds := 0.0
 const Factions = preload("res://sim/factions.gd")
+const Labour = preload("res://sim/labour.gd")
 ## Faction chips beside the gold counter, one per present faction, by id.
 var faction_bar: HBoxContainer
 var faction_chips: Dictionary = {}
@@ -149,6 +161,15 @@ var markup_lock: Label
 var class_overlay_button: CheckButton
 var class_legend: PanelContainer
 var class_legend_text: RichTextLabel
+var food_overlay_button: CheckButton
+var food_legend: PanelContainer
+## Food balance (sim/food_report.gd): the top-bar button, its breakdown
+## panel, and the meter that samples what the village makes and eats.
+var food_button: Button
+var food_menu: PanelContainer
+var food_text: RichTextLabel
+var food_map_toggle: CheckButton
+var food_meter = FoodReport.new()
 ## The inspector's "Offer for sale" toggle and its bids, by faction id.
 var sale_button: Button
 var sale_list: VBoxContainer
@@ -327,6 +348,7 @@ func _ready() -> void:
 	map_button.pressed.connect(func(): world_map_requested.emit())
 	root.add_child(map_button)
 	_build_treasury_menu()
+	_build_food_menu()
 	_build_factions_menu()
 	stock_bar = _panel()
 	stock_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -374,6 +396,12 @@ func _ready() -> void:
 	class_overlay_button.tooltip_text = "Colour houses by faction and show where union halls and alehouses reach"
 	class_overlay_button.toggled.connect(func(_on): class_overlay_toggled.emit())
 	options_column.add_child(class_overlay_button)
+	food_overlay_button = CheckButton.new()
+	food_overlay_button.text = "Food overlay (F7)"
+	food_overlay_button.focus_mode = Control.FOCUS_NONE
+	food_overlay_button.tooltip_text = "Show fertile soil, wild berries, the fishing shore and the game in each range"
+	food_overlay_button.toggled.connect(func(_on): food_overlay_toggled.emit())
+	options_column.add_child(food_overlay_button)
 	options_column.add_child(HSeparator.new())
 	restart_button = _button("Restart village")
 	restart_button.pressed.connect(func(): restart_requested.emit())
@@ -897,7 +925,8 @@ func configure_build_menu(db) -> void:
 				supply_labels[good] = label
 				supply_bar.add_child(item)
 	for category in ContentDB.CATEGORIES:
-		var members: Array = db.buildings.keys().filter(func(id): return db.buildings[id].category == category)
+		# Reserved rows (the manor) exist in data but are not built yet.
+		var members: Array = db.buildings.keys().filter(func(id): return db.buildings[id].category == category and not db.buildings[id].get("reserved", false))
 		if members.is_empty(): continue
 		var category_button := _menu_row(ContentDB.CATEGORIES[category],"%d  ›" % members.size())
 		category_button.tooltip_text = ", ".join(members.map(func(id): return db.buildings[id].name))
@@ -994,6 +1023,9 @@ func reset() -> void:
 	close_treasury_menu()
 	close_factions_menu()
 	set_class_overlay_visible(false)
+	set_food_overlay_visible(false)
+	close_food_menu()
+	food_meter.samples.clear()
 	sale_button.set_pressed_no_signal(false)
 	placement_card.visible = false
 	side.visible = false
@@ -1056,6 +1088,10 @@ func _layout() -> void:
 	stock_bar.reset_size()
 	stock_bar.size.y = treasury_button.size.y
 	stock_bar.position = Vector2(treasury_button.get_rect().end.x + 10, 18)
+	food_button.reset_size()
+	food_button.size.y = treasury_button.size.y
+	# Beside the top-right buttons, so the top centre stays clear.
+	food_button.position = Vector2(map_button.position.x - food_button.size.x - 10, 18)
 	# Faction chips sit under the gold counter; the panels open below them.
 	faction_bar.reset_size()
 	faction_bar.position = Vector2(18,treasury_button.get_rect().end.y + 8)
@@ -1066,8 +1102,12 @@ func _layout() -> void:
 	factions_menu.position = Vector2(18,below)
 	class_legend.reset_size()
 	class_legend.position = Vector2(18,(placement_card.position.y if placement_card.visible else screen.y)-class_legend.size.y-18).floor()
+	food_legend.reset_size()
+	food_legend.position = Vector2(18,(class_legend.position.y if class_legend.visible else (placement_card.position.y if placement_card.visible else screen.y))-food_legend.size.y-18).floor()
 	treasury_menu.reset_size()
 	treasury_menu.position = Vector2(18,below)
+	food_menu.reset_size()
+	food_menu.position = Vector2(clampf(food_button.get_rect().end.x - food_menu.size.x, 18, maxf(18, screen.x - food_menu.size.x - 18)),food_button.get_rect().end.y + 12).floor()
 	toast.reset_size()
 	toast.position = Vector2((screen.x-toast.size.x)/2.0,20).floor()
 
@@ -1140,10 +1180,10 @@ func blocks_mouse(point: Vector2) -> bool:
 		return true
 	if factions_menu.visible and factions_menu.get_global_rect().has_point(point):
 		return true
-	for button in [cog_button,sun_button,map_button,treasury_button]:
+	for button in [cog_button,sun_button,map_button,treasury_button,food_button]:
 		if button.get_global_rect().has_point(point):
 			return true
-	for panel in [bottom,build_menu,placement_card,side,toast,weather_menu,treasury_menu,stock_bar,faction_bar,class_legend]:
+	for panel in [bottom,build_menu,placement_card,side,toast,weather_menu,treasury_menu,stock_bar,faction_bar,class_legend,food_legend,food_menu]:
 		if panel.visible and panel.get_global_rect().has_point(point):
 			return true
 	return false
@@ -1152,6 +1192,7 @@ func refresh(sim, selected_id: int, tool: String, rotation_quarters: int = 0) ->
 	_refresh_treasury(sim)
 	_refresh_factions(sim)
 	_refresh_stock_bar(sim)
+	_refresh_food(sim)
 	demolish_button.button_pressed = tool == "demolish"
 	demolish_button.modulate = Color("d6c288") if tool == "demolish" else Color.WHITE
 	for id in build_buttons:
@@ -1198,6 +1239,7 @@ func _refresh_inspection(sim, building) -> void:
 		"producer":
 			var assigned := int(row.workers) if building.staffed else 0
 			text += "[b]Workers[/b]  %d / %d%s  ·  %d idle in village\n" % [assigned,int(row.workers),"" if building.workers_enabled else " (stopped)",sim.idle_workers]
+			text += _crew_text(sim,building)
 			var morale: int = Needs.morale(sim)
 			if Needs.work_speed(morale) < 100:
 				text += "[b]Speed[/b]  [color=#d98c6f]%d%%[/color]  ·  village morale %d%%\n" % [Needs.work_speed(morale),morale]
@@ -1230,7 +1272,8 @@ func _refresh_inspection(sim, building) -> void:
 			inspection_progress.value = building.progress
 		"house":
 			var tier: Dictionary = sim.db.tiers[building.tier]
-			text += "[b]Tier %d[/b]  %s\n[b]Workers provided[/b]  %d\n" % [building.tier,tier.name,int(tier.workers_per_house)]
+			text += "[b]Tier %d[/b]  %s\n" % [building.tier,tier.name]
+			text += _family_text(sim,building)
 			text += _class_text(sim,building) + "\n"
 			text += "[b]Happiness[/b]  %d%%  ·  %d of %d needs met this cycle\n" % [building.happiness,building.needs_met.size(),tier.consumption.size() + Needs.counted_services(tier).size()]
 			var settled: int = Needs.settled(building)
@@ -1261,6 +1304,7 @@ func _refresh_inspection(sim, building) -> void:
 					if carrier.stage != "idle": active += 1
 					if not carrier.cargo.is_empty(): carrying += 1
 			# Carriers are jobs, staffed from the village's idle workers.
+			text += _keeper_text(sim,building)
 			text += "\n[b]Carriers[/b]  %d active  ·  %d of %d on shift%s\n[b]Carrying goods[/b]  %d\n" % [active,building.crew,total,"" if building.crew >= total else " [color=#d98c6f](short of workers)[/color]",carrying]
 			text += "[b]Carriers' wages[/b]  %s so far, from the markup\n\n" % Economy.format(building.wages_paid)
 			text += "[b]Storage[/b]  %d / %d\n%s\n\n" % [building.inventory.total(),building.inventory.capacity,_goods(building.inventory.items,sim.db)]
@@ -1440,6 +1484,14 @@ func _build_factions_menu() -> void:
 	class_legend_text = _rich_label(13)
 	class_legend_text.custom_minimum_size = Vector2(230,0)
 	class_legend.add_child(class_legend_text)
+	food_legend = _panel()
+	food_legend.visible = false
+	food_legend.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(food_legend)
+	var legend_text := _rich_label(13)
+	legend_text.custom_minimum_size = Vector2(250,0)
+	legend_text.text = FOOD_LEGEND
+	food_legend.add_child(legend_text)
 
 func _rich_label(font_size: int) -> RichTextLabel:
 	var label := RichTextLabel.new()
@@ -1827,3 +1879,203 @@ func _refresh_class_legend(sim) -> void:
 	if class_legend_text.text != text:
 		class_legend_text.text = text
 		_layout()
+
+func set_food_overlay_visible(value: bool) -> void:
+	food_overlay_button.set_pressed_no_signal(value)
+	if food_map_toggle != null: food_map_toggle.set_pressed_no_signal(value)
+	food_legend.visible = value
+	_layout()
+	call_deferred("_layout")
+
+## Food balance colours: enough, living off stores, short, and still measuring.
+const FOOD_COLOURS := {"surplus": "93d46b", "stores": "f0b43c", "deficit": "f2694f", "measuring": "b9b3a1"}
+
+## The top-bar food button and its breakdown panel (sim/food_report.gd).
+func _build_food_menu() -> void:
+	food_button = _button("Food")
+	food_button.toggle_mode = true
+	food_button.custom_minimum_size = Vector2(0,48)
+	food_button.tooltip_text = "Food made against what the houses need, per minute: open the breakdown and the food overlay"
+	var image := Image.new()
+	image.load_svg_from_string(FileAccess.get_file_as_string("res://view/overlays/food.svg"),1.0)
+	food_button.icon = ImageTexture.create_from_image(image)
+	food_button.add_theme_font_size_override("font_size",17)
+	food_button.pressed.connect(_toggle_food_menu)
+	root.add_child(food_button)
+	food_menu = _panel()
+	food_menu.visible = false
+	root.add_child(food_menu)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation",6)
+	column.custom_minimum_size = Vector2(380,0)
+	food_menu.add_child(column)
+	var header := HBoxContainer.new()
+	column.add_child(header)
+	var title := _label("Food",20)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close := _button("×")
+	close.tooltip_text = "Close the food breakdown"
+	close.pressed.connect(close_food_menu)
+	header.add_child(close)
+	food_text = _rich_label(14)
+	food_text.custom_minimum_size = Vector2(380,0)
+	column.add_child(food_text)
+	food_map_toggle = CheckButton.new()
+	food_map_toggle.text = "Show on the map (F7)"
+	food_map_toggle.focus_mode = Control.FOCUS_NONE
+	food_map_toggle.add_theme_font_size_override("font_size",14)
+	food_map_toggle.toggled.connect(func(_on): food_overlay_toggled.emit())
+	column.add_child(food_map_toggle)
+
+func _toggle_food_menu() -> void:
+	food_menu.visible = not food_menu.visible
+	food_button.button_pressed = food_menu.visible
+	if food_menu.visible:
+		close_options_menu()
+		close_build_menu()
+		close_weather_menu()
+		if shown_sim != null: _refresh_food(shown_sim)
+		food_menu_opened.emit()
+	_layout()
+
+func close_food_menu() -> void:
+	food_menu.visible = false
+	food_button.button_pressed = false
+	_layout()
+
+## Samples the meter, then shows the balance on the button: food made (plus
+## spare capacity waiting on storage) less what the houses need, per minute.
+func _refresh_food(sim) -> void:
+	food_meter.sample(sim)
+	var report: Dictionary = food_meter.report(sim)
+	# A short need shows its shortfall even if another need has food to spare.
+	var net: float = -float(report.short) if report.state in ["stores","deficit"] else float(report.usable) - float(report.required)
+	var text := "Food …" if report.state == "measuring" else "Food %s%.1f/min" % ["+" if net >= 0.0 else "−", absf(net)]
+	var colour := Color(FOOD_COLOURS[report.state])
+	if food_button.text != text or food_button.get_theme_color("font_color") != colour:
+		food_button.text = text
+		for key in ["font_color","font_pressed_color","font_hover_color","font_focus_color"]:
+			food_button.add_theme_color_override(key, colour)
+		_layout()
+	if food_menu.visible:
+		var body := _food_breakdown(report)
+		if food_text.text != body:
+			food_text.text = body
+			_layout()
+
+func _food_breakdown(report: Dictionary) -> String:
+	var lines: Array[String] = []
+	var colour: String = FOOD_COLOURS[report.state]
+	if report.state == "measuring":
+		lines.append("[color=#%s]Measuring the last two minutes…[/color]" % colour)
+	else:
+		var verdict: String = {"surplus": "Enough food for every house", "stores": "Short %.1f/min: living off stored food", "deficit": "Short %.1f/min: houses will go hungry"}[report.state]
+		lines.append("[color=#%s][b]%s[/b][/color]" % [colour, (verdict % report.short) if "%" in verdict else verdict])
+	lines.append("Made [b]%.1f[/b]/min · needed [b]%.1f[/b]/min · eaten [b]%.1f[/b]/min" % [report.made, report.required, report.eaten])
+	if float(report.usable_spare) > 0.05:
+		lines.append("[color=#868f7a]Producers waiting for storehouse room could add %.1f/min[/color]" % report.usable_spare)
+	if float(report.required) > 0.0:
+		lines.append("Stored %d food the houses eat: about %d min" % [report.stored, int(report.minutes_stored)])
+	lines.append("")
+	lines.append("[b]Needs[/b]")
+	if report.needs.is_empty():
+		lines.append("[color=#868f7a]No houses yet[/color]")
+	for need in report.needs:
+		var met: bool = float(need.supplied) + 0.05 >= float(need.required) * 0.95
+		var need_colour: String = FOOD_COLOURS.measuring if report.state == "measuring" else ("a8c38a" if met else "d98c6f")
+		lines.append("[color=#%s]%s (%d %s): %.1f %s/min[/color]" % [need_colour, " and ".join(need.tiers), need.houses, "house" if need.houses == 1 else "houses", need.required, str(need.name).to_lower()])
+		var names: Array = []
+		for good in need.goods:
+			names.append(str(shown_sim.db.goods[good].name).to_lower() if shown_sim != null else good)
+		lines.append("[color=#868f7a]   %s · supplied %.1f/min[/color]" % [", ".join(names), need.supplied])
+	lines.append("")
+	lines.append("[b]By food[/b]  [color=#868f7a]per minute, last two minutes[/color]")
+	var table := "[table=4][cell][color=#868f7a]Food[/color]   [/cell][cell][color=#868f7a]Made   [/color][/cell][cell][color=#868f7a]Eaten   [/color][/cell][cell][color=#868f7a]Stored[/color][/cell]"
+	var sources: Array[String] = []
+	for row in report.goods:
+		if float(row.made) <= 0.0 and float(row.eaten) <= 0.0 and int(row.stored) == 0 and row.sources.is_empty():
+			continue
+		table += "[cell]%s   [/cell][cell]%.1f[/cell][cell]%.1f[/cell][cell]%d[/cell]" % [row.name, row.made, row.eaten, row.stored]
+		for source in row.sources:
+			var parts: Array[String] = []
+			if int(source.working) > 0:
+				parts.append("%d working" % source.working)
+			for status in source.idle:
+				parts.append("%d %s" % [source.idle[status], status])
+			sources.append("[color=#868f7a]%s: %s ×%d · %s[/color]" % [row.name, source.name, source.count, ", ".join(parts)])
+	lines.append(table + "[/table]")
+	if sources.is_empty():
+		lines.append("[color=#868f7a]No food producers yet: build a forager, hunter, fisher or berry bushes[/color]")
+	else:
+		lines.append("")
+		lines.append("[b]Producers[/b]")
+		lines.append_array(sources)
+	return "\n".join(lines)
+
+## Jobs by class and the families who fill them (docs/PLAN-job-classes.md).
+func _class_label(job_class: String) -> String:
+	return {"middle":"middle-class", "elite":"wealthy"}.get(job_class, "working-class")
+
+func _house_label(sim, uid: int) -> String:
+	var house = sim.buildings.get(uid)
+	if house == null:
+		return "the founders"
+	return "%s at (%d, %d)" % [house.definition.name, house.cell.x, house.cell.y]
+
+## Which families a workplace's workers come from, and any job no family of
+## its class can fill.
+func _crew_text(sim, building) -> String:
+	var wanted: Dictionary = Labour.jobs(building.definition)
+	if wanted.is_empty():
+		return ""
+	var counts := {}
+	for uid in building._crew:
+		counts[uid] = int(counts.get(uid, 0)) + 1
+	var parts: Array[String] = []
+	for uid in counts:
+		parts.append(_house_label(sim, uid) + (" ×%d" % counts[uid] if counts[uid] > 1 else ""))
+	var text := "[b]Families[/b]  %s\n" % ", ".join(parts) if not parts.is_empty() else ""
+	if building.workers_enabled and not building.staffed:
+		for job_class in wanted:
+			if Labour.rank(job_class) > 1:
+				text += "[color=#d98c6f]Needs a %s family: lower classes cannot take its %s job[/color]\n" % [_class_label(job_class), _class_label(job_class)]
+	return text
+
+## A storehouse's storekeeper, or why it has none.
+func _keeper_text(sim, store) -> String:
+	if Labour.jobs(store.definition).is_empty():
+		return ""
+	if store._keeper >= 0:
+		return "[b]Storekeeper[/b]  %s  ·  takes %d%% of the markup\n" % [_house_label(sim, store._keeper), Labour.KEEPER_PERCENT]
+	return "[b]Storekeeper[/b]  [color=#d98c6f]none: needs a middle-class family[/color]  ·  carriers take the whole markup\n"
+
+## A house's family: its working adults, children and the jobs they hold.
+## Wages follow the jobs, so a family with none earns nothing.
+func _family_text(sim, house) -> String:
+	var adults: int = Labour.adults(sim, house)
+	# The founding adults live in the first house.
+	var first := true
+	for other in sim.buildings.values():
+		if other.definition.kind == "house" and other.uid < house.uid:
+			first = false
+	if first:
+		adults += Labour.FOUNDERS
+	var children: int = sim.family_children(house) if sim.has_method("family_children") else 0
+	var held: Array[String] = []
+	for building in sim.buildings.values():
+		if building.definition.kind == "storehouse" and building._keeper == house.uid:
+			held.append("Storekeeper")
+		for uid in building._crew:
+			if uid == house.uid:
+				held.append("Carrier" if building.definition.kind == "storehouse" else str(building.definition.name))
+	var text := "[b]Family[/b]  %d working adult%s%s  ·  %d in work\n" % [adults, "" if adults == 1 else "s", (", %d child%s" % [children, "" if children == 1 else "ren"]) if children > 0 else "", held.size()]
+	if held.is_empty():
+		return text + "[color=#d98c6f]No one in work, so no wages[/color]\n\n"
+	var tally := {}
+	for name in held:
+		tally[name] = int(tally.get(name, 0)) + 1
+	var parts: Array[String] = []
+	for name in tally:
+		parts.append(name + (" ×%d" % tally[name] if tally[name] > 1 else ""))
+	return text + "[b]Jobs[/b]  %s\n\n" % ", ".join(parts)

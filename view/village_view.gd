@@ -9,6 +9,8 @@ const BUILDING_PREVIEW = preload("res://render/building_preview.gdshader")
 const HUD = preload("res://view/overlays/village_hud.gd")
 const VillageFoliage = preload("res://view/village_foliage.gd")
 const VillageWildlife = preload("res://view/village_wildlife.gd")
+const VillageForage = preload("res://view/village_forage.gd")
+const FoodOverlay = preload("res://view/food_overlay.gd")
 const VillageAtmosphere = preload("res://view/village_atmosphere.gd")
 const TerrainRelief = preload("res://view/terrain_relief.gd")
 const GridChanges = preload("res://view/grid_changes.gd")
@@ -22,6 +24,10 @@ var campaign
 var foliage
 ## Deer and boar where the sim's herds live; see village_wildlife.gd.
 var wildlife_layer
+## Wild berry bushes; see village_forage.gd.
+var forage_layer
+## Food overlay (F7): fertile soil, wild food, fishing shore and game; see food_overlay.gd.
+var food_overlay
 var atmosphere: AtmosphereSystem
 ## Hand-made site to play: --site=<name> on the command line, F4 to cycle.
 var site_name := "first_bread"
@@ -100,6 +106,10 @@ func _ready() -> void:
 	world.add_child(foliage)
 	wildlife_layer = VillageWildlife.new(factory.medieval)
 	world.add_child(wildlife_layer)
+	forage_layer = VillageForage.new(factory.medieval)
+	world.add_child(forage_layer)
+	food_overlay = FoodOverlay.new()
+	world.add_child(food_overlay)
 	weather_focus = Node3D.new()
 	weather_focus.position = camera.focus
 	world.add_child(weather_focus)
@@ -159,6 +169,9 @@ func _ready() -> void:
 	hud.pledge_broken.connect(func(id): _panel_command(sim.break_pledge(id)))
 	hud.sale_requested.connect(func(id): _panel_command(sim.sell_building(selected_uid,id)))
 	hud.class_overlay_toggled.connect(_toggle_class_overlay)
+	hud.food_overlay_toggled.connect(_toggle_food_overlay)
+	# Opening the food breakdown also shows the food overlay on the map.
+	hud.food_menu_opened.connect(func(): if not food_overlay.visible: _toggle_food_overlay())
 	hud.inspection_closed.connect(func():
 		selected_uid = -1
 		hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
@@ -220,6 +233,9 @@ func _refresh_village() -> void:
 	_frame_site()
 	foliage.build(sim.grid)
 	wildlife_layer.build(sim.grid,relief)
+	forage_layer.build(relief)
+	food_overlay.build(sim.grid,relief)
+	food_overlay.visible = false
 	atmosphere.reset_art_motion()
 	atmosphere.set_time_of_day(16.0)
 	atmosphere.set_weather(AtmosphereProfile.Weather.CLEAR,0.0,true)
@@ -350,6 +366,8 @@ func _sync_view() -> void:
 		ghost_signature = ""
 	foliage.sync_growth(sim.grid,sim.tick)
 	wildlife_layer.sync(sim.wildlife)
+	forage_layer.sync(sim.forage)
+	food_overlay.sync(sim)
 	for building in sim.buildings.values():
 		var node: Node3D = building_nodes.get(building.uid)
 		if node != null and int(node.get_meta("tier")) != building.tier:
@@ -468,6 +486,22 @@ func _update_ghost() -> void:
 		preview_material.set_shader_parameter("tint", color)
 		_apply_preview_material(preview, preview_material)
 		ghost_root.add_child(preview)
+		# A field shows how much of it would stand on fertile soil.
+		if row.has("off_deposit_percent"):
+			var speed: int = sim.deposit_speed(row,hover_cell,tool.rotation_quarters)
+			var soil := Label3D.new()
+			soil.name = "Soil"
+			soil.text = ("Fertile soil" if speed == 100 else ("Poor soil" if speed == int(row.off_deposit_percent) else "Part fertile")) + " · %d%% speed" % speed
+			soil.position = preview.position + Vector3(0,1.4,0)
+			soil.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			soil.no_depth_test = true
+			soil.fixed_size = true
+			soil.pixel_size = 0.0012
+			soil.font_size = 26
+			soil.outline_size = 8
+			soil.modulate = Color("f3e6c4") if speed == 100 else Color("e8b86a")
+			soil.outline_modulate = Color("3a2a1c")
+			ghost_root.add_child(soil)
 	elif tool.selected == "demolish":
 		color = Color("9a5440")
 	for cell in cells:
@@ -507,12 +541,15 @@ func _unhandled_input(event: InputEvent) -> void:
 				hud.close_weather_menu()
 				hud.close_treasury_menu()
 				hud.close_factions_menu()
+				hud.close_food_menu()
 				selected_uid = -1
 				_select_tool("inspect")
 			KEY_F3:
 				_toggle_deposits()
 			KEY_F5:
 				_toggle_class_overlay()
+			KEY_F7:
+				_toggle_food_overlay()
 			KEY_F4:
 				_cycle_site()
 			KEY_HOME: _overview_site()
@@ -563,6 +600,11 @@ func _panel_command(ok: bool) -> void:
 func _toggle_deposits() -> void:
 	deposits_root.visible = not deposits_root.visible
 	hud.set_deposits_visible(deposits_root.visible)
+
+func _toggle_food_overlay() -> void:
+	food_overlay.visible = not food_overlay.visible
+	hud.set_food_overlay_visible(food_overlay.visible)
+	food_overlay.sync(sim)
 
 func _toggle_class_overlay() -> void:
 	class_root.visible = not class_root.visible

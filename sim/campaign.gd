@@ -263,6 +263,13 @@ func load_save(path: String) -> bool:
 				var carrier = Carrier.new(entry.uid, entry.owner, entry.cell)
 				if not _restore(carrier, entry): return _fail("Invalid saved carrier.")
 				restored.carriers.append(carrier)
+			# Version one predates game and wild berries: settle both from the
+			# restored land, as a newly founded village would hold them.
+			restored.wildlife.setup(restored.grid)
+			restored.forage.setup(restored.grid)
+			# Its Villager houses would already have brought the unions and
+			# populists; they arrive now, silently, like the site's factions.
+			restored.factions.arrive_quietly(restored)
 			# Legacy reflection saves are normalized through the same validated
 			# inverse as current saves before they enter the campaign.
 			restored = Sim.from_snapshot(restored.snapshot())
@@ -430,7 +437,7 @@ static func _state(object) -> Dictionary:
 ## building the Crown's and every house unaligned, with no pull streak). The
 ## village is founded again on load, so its site's factions arrive with their
 ## endowments as outside money.
-const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration","happiness_history","crew","wages_paid","outside_money","factions","priority","keep_service_reserve","owner","aligned","owner_work","pull_leader","pull_streak"]
+const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration","happiness_history","crew","wages_paid","outside_money","factions","priority","keep_service_reserve","owner","aligned","owner_work","pull_leader","pull_streak","earned","adults","children"]
 
 static func _restore(object, state: Dictionary) -> bool:
 	var expected := _state(object)

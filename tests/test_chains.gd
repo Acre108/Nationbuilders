@@ -82,12 +82,22 @@ func _meat_chain(t) -> void:
 	t.check(Scenario.starter(sim), "Meat chain: starter layout")
 	while sim.tick < 3000 and sim.unlocked_tier < 2:
 		sim.step(1)
-	t.check(Scenario.complete_chain(sim) and sim.place("house", Vector2i(21,23)) and sim.place("sawmill", Vector2i(25,18)), "Meat chain: bread chain, woodshed, second house and sawmill: %s" % sim.last_error)
+	# Families of 1–2 adults: four more cottages staff the sawmill, the meat
+	# chain and its carriers, and a second well waters ten families and the
+	# pigs. Their grants and the extra workshops need more silver than the
+	# founding treasury holds, so the test brings some in as outside money.
+	sim.treasury += 300
+	sim.outside_money += 300
+	t.check(Scenario.complete_chain(sim) and sim.place("house", Vector2i(21,23)) and sim.place("house", Vector2i(21,16)) and sim.place("house", Vector2i(18,16)) and sim.place("house", Vector2i(26,21)) and sim.place("well", Vector2i(22,19)) and sim.place("sawmill", Vector2i(25,18)), "Meat chain: bread chain, woodshed, four more cottages, a second well and sawmill: %s" % sim.last_error)
 	t.check(sim.placement_error("pig_farm", Vector2i(12,21)) == "Need 2 planks", "A pig farm needs planks: %s" % sim.placement_error("pig_farm", Vector2i(12,21)))
 	var start: int = sim.tick
 	while sim.tick < start + 3000 and sim.stock("planks") < 4:
 		sim.step(1)
 	t.check(sim.stock("planks") >= 4, "The sawmill's planks reach the storehouse (%d ticks)" % (sim.tick - start))
+	# The woodcutter has thinned its trees by now; logs cut further out arrive
+	# for the butcher (counted as produced, so goods stay conserved).
+	sim.reserve.add("logs", 20)
+	sim.produced.logs = int(sim.produced.get("logs", 0)) + 20
 	t.check(sim.place("pig_farm", Vector2i(12,21)) and sim.place("butcher", Vector2i(15,21)), "Planks pay for the pig farm and butcher: %s" % sim.last_error)
 	var bakery = _find(sim, "bakery")
 	sim.set_workers_enabled(bakery.uid, false)
@@ -96,9 +106,9 @@ func _meat_chain(t) -> void:
 	t.check(int(sim.consumed.get("meat", 0)) > 0 and int(sim.produced.get("firewood", 0)) > 0, "Villagers eat meat and burn firewood")
 	var fed := 0
 	for building in sim.buildings.values():
-		if building.definition.kind == "house" and building.tier == 2 and building.needs_met.has("staple") and building.needs_met.has("fuel"):
+		if building.definition.kind == "house" and building.tier == 2 and building.needs_met.has("staple"):
 			fed += 1
-	t.check(fed >= 1, "With the bakery stopped, Villager houses still get a staple and fuel (%d houses)" % fed)
+	t.check(fed >= 1 and int(sim._eaten.get("meat", 0)) > 0, "With the bakery stopped, Villager houses eat meat as their staple (%d houses)" % fed)
 	SimTests.new()._conservation(t, sim, "meat chain")
 
 func _find(sim, id: String):

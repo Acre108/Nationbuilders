@@ -1,7 +1,7 @@
 extends RefCounted
 ## Blender-authored kit and presentation-only local inventory displays.
 const ASSET_DIR := "res://assets/buildings/medieval/"
-const MODELS := ["house", "storehouse", "farm", "well", "woodcutter", "forester", "mill", "bakery", "chapel", "berry_bushes", "fisher", "woodshed", "sawmill", "pig_farm", "butcher", "hunter"]
+const MODELS := ["house", "storehouse", "farm", "well", "woodcutter", "forester", "mill", "bakery", "chapel", "berry_bushes", "fisher", "woodshed", "sawmill", "pig_farm", "butcher", "hunter", "forager", "master_house", "inn"]
 const GOODS := ["wheat", "flour", "water", "logs", "bread", "berries", "fish", "meat", "pigs", "firewood", "planks"]
 var materials: Dictionary
 var scenes: Dictionary = {}

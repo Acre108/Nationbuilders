@@ -21,7 +21,7 @@ Assumed, and easy to change: pledges lock the levers they cover.
   - The storehouse markup pays the carriers' wages.
   - Services (`"service": true`, the forester) are paid by the treasury.
   - Tax and markup are set in the sim (`set_tax_percent`, `set_markup_percent`). The Treasury panel has buttons for both.
-- **Settled happiness and village morale** are done (`Needs.settled(house)`, −1 before the first full cycle; `Needs.morale(sim)`). Items 0–6 and 9 are built (15 Oct). Item 7, the HUD, is built too. Item 8, the balance soak, is next.
+- **Settled happiness and village morale** are done (`Needs.settled(house)`, −1 before the first full cycle; `Needs.morale(sim)`). Items 0–6 and 9 are built (15 Oct). Items 7 and 8 are built too: phase 1 is complete apart from the open questions in FACTIONS.md §13.
 - **Saves:** new snapshot keys are listed in `LEGACY_ADDED` in `sim/campaign.gd`, so older saves load with defaults and there is no version bump.
 - **Building kinds:** `content_db.gd` accepts `producer`, `house`, `storehouse`, `road` and `hall` (union halls and alehouses).
 
@@ -137,7 +137,7 @@ Each item ends with the headless suite passing (`tools/run_tests.ps1`), and with
 - [x] Add every new sim and building key to `snapshot()`, `from_snapshot` validation and `LEGACY_ADDED`.
 - [x] Reject an unknown faction or owner, negative coffers, favour out of range, and offers or pledges that refer to missing buildings.
 - [x] Tests: round-trip mid-pledge and mid-streak; older saves load with no factions present until their triggers; a malformed state is rejected.
-- [ ] Legacy loads (item 1 note): a version-one save is founded again on load, so the site's factions arrive with their endowments, but the save's own events replace the founding "arrived" events. Working-class factions arrive one tick after load, and their arrival events carry the load tick. Decide whether migration should announce them.
+- [x] Legacy loads (item 1 note): a version-one save is founded again on load, so the site's factions arrive with their endowments, but the save's own events replace the founding "arrived" events. Working-class factions arrive one tick after load, and their arrival events carry the load tick. Decided 15 Oct: factions arrive silently. Migration now brings the working-class factions at load, with no event (`Factions.arrive_quietly`).
 
 ### 7. HUD
 - [x] **Faction chips** next to the gold counter: one per present faction, with its colour, power % and a favour face. They appear when the faction arrives.
@@ -167,16 +167,18 @@ Each item ends with the headless suite passing (`tools/run_tests.ps1`), and with
   - Without a forester, logs run out by minutes 3–20.
   - Without a chapel, Villager houses top out at 75% happiness.
 - **Soak baseline.** Use the playtest/logistics layout instead: starter, chain, forester (placed away from the centre), chapel and two houses. Each 10 s/payday of service upkeep needs about one more Tier 2 house at 15% tax to balance.
-- **The middle class can never buy a storehouse.** Its 50 s endowment is far below the book value (about 200 s), and a storehouse is its only income. Raise the endowment, or lower storehouse book value.
+- **The middle class can never buy a storehouse.** Resolved 15 Oct: it no longer buys at all, and lobbies instead (FACTIONS.md §13 item 6).
 
-- [ ] Extend `tools/soak_village.gd` with faction columns: coffers, favour, members and offers.
-- [ ] Run 60 minutes on seed 73 and on a marsh seed. Targets, from FACTIONS.md §11:
+- [x] Faction columns (coffers, favour, members, pulls and offers) are in a new `tools/faction_soak.gd`, which runs the economy test village. `soak_village.gd` still runs the smaller starter layout.
+- [x] Run 60 minutes on seed 73 and on a marsh seed. Targets, from FACTIONS.md §11:
   - With no hall or alehouse, at least half of the Villager houses are unaligned at minute 30.
   - With a hall and an alehouse each serving half the houses, both factions hold members at minute 60.
   - With no deals, every faction ends between −30 and +30 favour.
   - Selling every house takes the unions below −25 within 15 minutes, and Tier 2 still holds.
   - Accepting every union offer returns at least 1 g per 20 minutes with 3 or more union houses.
-- [ ] Record the results in FACTIONS.md as §14, tune the weights in `factions.json`, and update README.md (play notes, public sim API).
+- [x] Record the results in FACTIONS.md as §14, tune the weights in `factions.json`, and update README.md (play notes, public sim API).
+
+**Result (15 Oct):** four of five targets met after the changes in FACTIONS.md §13 items 6–9. The working class still ends below −30 with no deals, from the test village's 45% idle workforce. Open: the middle class's income after its endowment, and whether coffers drain fast enough (the gentry reach the 4 g cap only when they buy every house).
 
 ### 9. World map (small)
 - [x] The hex panel lists the factions a site would interest, so where the player settles decides who comes.

@@ -26,6 +26,8 @@ const KINDS := ["producer", "house", "storehouse", "road", "hall"]
 const OWNABLE_KINDS := ["house", "producer", "storehouse", "hall"]
 ## Pull terms a recruiting faction's `pull` weights may name (FACTIONS.md §3.1;
 ## factions.gd reads them). Caps and steps are whole numbers too.
+## Job classes a building's jobs may name (docs/PLAN-job-classes.md).
+const JOB_CLASSES := ["working", "middle", "elite"]
 const PULL_TERMS := ["employment", "wages_in_full", "hall", "neighbour", "neighbour_cap", "relief", "idle_worker", "idle_cap", "need_unmet", "markup_over", "markup_step"]
 var goods: Dictionary = {}
 var buildings: Dictionary = {}
@@ -121,12 +123,18 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 				errors.append(prefix + "invalid forestry job or work radius")
 			if not row.inputs.is_empty() or (row.forest_action == "plant" and not row.outputs.is_empty()):
 				errors.append(prefix + "forestry must use trees rather than recipe inputs; planting has no goods output")
-		# A hunter's lodge takes game within work_radius tiles (wildlife.gd).
-		if row.has("hunts"):
-			if row.hunts != true or row.kind != "producer" or row.has("forest_action") or not _integer(row.get("work_radius"),1):
-				errors.append(prefix + "hunts must be true, on a producer with a work radius and no forestry job")
-			elif not row.inputs.is_empty() or row.outputs.is_empty():
-				errors.append(prefix + "hunting takes game rather than recipe inputs and yields goods")
+		# A hunter's lodge takes game, and a forager's hut wild berries, within
+		# work_radius tiles (wildlife.gd, forage.gd).
+		for job in ["hunts", "gathers"]:
+			if row.has(job):
+				if row[job] != true or row.kind != "producer" or row.has("forest_action") or (row.has("hunts") and row.has("gathers")) or not _integer(row.get("work_radius"),1):
+					errors.append(prefix + "%s must be true, on a producer with a work radius and no other land job" % job)
+				elif not row.inputs.is_empty() or row.outputs.is_empty():
+					errors.append(prefix + "%s takes from the land rather than recipe inputs and yields goods" % ("hunting" if job == "hunts" else "gathering"))
+		# A field works slower off its deposit (village_sim.deposit_speed).
+		if row.has("deposit") or row.has("off_deposit_percent"):
+			if not row.get("deposit") is String or row.get("deposit", "").is_empty() or not _integer(row.get("off_deposit_percent"), 1) or int(row.get("off_deposit_percent", 0)) > 100:
+				errors.append(prefix + "deposit needs off_deposit_percent, a whole percentage from 1 to 100")
 		if row.get("kind") == "producer" and (row.get("cycle_ticks", 0) < 1 or (row.get("outputs", {}).is_empty() and row.get("forest_action", "") != "plant" and not row.get("service", false))):
 			errors.append(prefix + "producer needs a cycle and outputs")
 		# A service that houses need ("provides", such as a chapel) covers houses
@@ -136,6 +144,19 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 				errors.append(prefix + "provides must name a service, on a service building")
 			if not _integer(row.get("service_radius"), 1):
 				errors.append(prefix + "invalid service_radius")
+		# Jobs by class (docs/PLAN-job-classes.md): whole counts that add up to
+		# the row's workers. A storehouse's one job is its storekeeper's.
+		if row.has("jobs"):
+			if not row.jobs is Dictionary or row.jobs.is_empty() or row.jobs.keys().any(func(job_class): return job_class not in JOB_CLASSES) or row.jobs.values().any(func(count): return not _integer(count, 1)):
+				errors.append(prefix + "jobs must map working, middle or elite to whole counts")
+			else:
+				var total := 0
+				for count in row.jobs.values():
+					total += int(count)
+				if total != int(row.workers):
+					errors.append(prefix + "jobs must add up to workers")
+				if row.get("kind") == "storehouse" and total != 1:
+					errors.append(prefix + "a storehouse has one job, its storekeeper's")
 		# Public services sell nothing; the treasury pays their workers.
 		if row.has("service") and not row.service is bool:
 			errors.append(prefix + "service must be true or false")
@@ -177,6 +198,7 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 				errors.append(prefix + "a hall is never sold and is not a service")
 		elif row.has("recruits_for") or row.has("radius"):
 			errors.append(prefix + "only halls have recruits_for and radius")
+		_validate_house_type(row, prefix)
 		if not row.get("terrain") is Array or row.get("terrain", []).is_empty():
 			errors.append(prefix + "terrain must be a nonempty array")
 		else:
@@ -359,6 +381,40 @@ func _goods_map(value: Variant, label: String) -> void:
 			errors.append(label + ": unknown good " + str(id))
 		if not _integer(value[id], 1):
 			errors.append(label + ": amounts must be positive integers")
+
+## House types (docs/PLAN-job-classes.md, "House types"). Every house names
+## the family it holds: `family` gives [min, max] adults (at least 1) and
+## children. Optional: `class` (working, middle or elite) overrides the tier's
+## class; `fixed_tier` keeps the house at one tier, never promoting or
+## demoting; `lodgers` makes each adult a single family (an inn); `comfort`
+## lifts the happiness of houses within its road radius; `reserved` rows
+## exist in data but cannot be built yet.
+func _validate_house_type(row: Dictionary, prefix: String) -> void:
+	var house: bool = row.get("kind") == "house"
+	for field in ["family", "class", "fixed_tier", "lodgers", "comfort"]:
+		if row.has(field) and not house:
+			errors.append(prefix + "only houses have " + field)
+	if not house:
+		return
+	var family: Variant = row.get("family")
+	if not family is Dictionary or family.size() != 2:
+		errors.append(prefix + "a house needs family: {adults: [min, max], children: [min, max]}")
+	else:
+		for part in ["adults", "children"]:
+			var span: Variant = family.get(part)
+			if not span is Array or span.size() != 2 or not _integer(span[0], 1 if part == "adults" else 0) or not _integer(span[1], 0) or span[1] < span[0]:
+				errors.append(prefix + "family %s must be [min, max] whole numbers%s" % [part, ", at least 1 adult" if part == "adults" else ""])
+	if row.has("class") and row["class"] not in JOB_CLASSES:
+		errors.append(prefix + "class must be working, middle or elite")
+	if row.has("fixed_tier") and (not _integer(row.fixed_tier, 1) or not tiers.has(int(row.fixed_tier))):
+		errors.append(prefix + "fixed_tier must be a known tier")
+	for flag in ["lodgers", "reserved"]:
+		if row.has(flag) and not row[flag] is bool:
+			errors.append(prefix + flag + " must be true or false")
+	if row.has("comfort"):
+		var comfort: Variant = row.comfort
+		if not comfort is Dictionary or not _integer(comfort.get("radius"), 1) or not _integer(comfort.get("happiness"), 1) or int(comfort.get("happiness", 0)) > 100:
+			errors.append(prefix + "comfort needs a whole radius and a happiness bonus from 1 to 100")
 
 ## A tier's consumption: a goods map whose keys may also be goods categories
 ## with at least one good.

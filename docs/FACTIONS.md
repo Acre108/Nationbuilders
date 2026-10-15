@@ -16,7 +16,7 @@ The system has three jobs:
 2. **Balance or back.** The factions want conflicting things. The player keeps them content or picks sides. This matters most in towns.
 3. **Money comes back out.** Factions pay the treasury when the player does what they like. A union lobbies for a policy; a landlord buys houses.
 
-**How it plays.** Early in a village nobody is organised. Houses that become Villagers earn wages and join the working class, but at first they belong to no faction. A union hall draws the households around it into the unions. An alehouse, unemployment or empty pantries draw them to the populists. Aristocrats and industrialists arrive with capital to buy houses and mills, and the middle class buys the storehouses as shops. A treasury short of gold can sell a house to a landlord: the gold arrives at once, the household pays rent, and the unions resent it. In a town all six factions are present. The cultural elite's press colours how every faction sees the Crown, and every lever helps some factions and costs others.
+**How it plays.** Early in a village nobody is organised. Houses that become Villagers earn wages and join the working class, but at first they belong to no faction. A union hall draws the households around it into the unions. An alehouse, unemployment or empty pantries draw them to the populists. Aristocrats and industrialists arrive with capital to buy houses and mills. The middle class is a class rather than a faction of owners: it spends its money lobbying, not buying. A treasury short of gold can sell a house to a landlord: the gold arrives at once, the household pays rent, and the unions resent it. In a town all six factions are present. The cultural elite's press colours how every faction sees the Crown, and every lever helps some factions and costs others.
 
 ## 1. Setting and what this replaces
 
@@ -31,7 +31,7 @@ The system has three jobs:
 | --- | --- | --- | --- | --- | --- |
 | Trade unions (`union`) | Working | Working-class houses it wins (§3.1) | Union halls; co-operative workshops later | Dues: 5% of members' wages | Pledges; organising |
 | Populists (`populist`) | Working | Working-class houses it wins (§3.1) | Alehouses | Penny dues: 2% of members' wages; gifts from elite patrons | Pledges; organising |
-| Middle class (`middle`) | Middle | Tier 3 Townsfolk; town shopkeepers' and clerks' houses | Storehouses, which serve as shops; markets later | The owner's share of its shops' markup | Storehouses, pledges |
+| Middle class (`middle`) | Middle | Tier 3 Townsfolk; town shopkeepers' and clerks' houses | None: it is a class, not a faction of owners (decided 15 October 2026) | Its endowment in villages; its income is still open (§13) | Pledges (lobbying) |
 | Industrialists (`industry`) | Elite | Town manufacturers' townhouses | Workshops | The owner's share of their workshops' sales | Workshops, pledges |
 | Aristocrats (`gentry`) | Elite | Town manors | Houses and fields | Rent; the owner's share from fields | Houses, fields, pledges |
 | Cultural elite (`culture`) | Elite | Town scholars' houses | Printing presses, schools, theatres (town) | Press and theatre sales; patronage | Pledges, often paid in favourable press instead of silver |
@@ -126,9 +126,9 @@ Each faction has **favour** toward the player, from −100 to +100. It starts at
 
 | State or lever | Unions | Populists | Middle | Industry | Aristocrats | Cultural |
 | --- | --- | --- | --- | --- | --- | --- |
-| Tax on wages above 10% | − | − | | | | |
+| Tax on wages above the default 15% | − | − | | | | |
 | Markup above 10% | − | −− | + | | | |
-| Idle workers | − | − | | + | | |
+| Idle workers above 10% of the workforce | − | − | | + | | |
 | Public workers unpaid (last 6 paydays) | −− | | | | | |
 | Average rent | − | − | | | + | |
 | Houses sold to landlords (last 30 paydays) | − | | | | + | |
@@ -148,9 +148,9 @@ The weight of one step for each row lives in `factions.json`. First-pass weights
 
 | Row | Weight of one step |
 | --- | --- |
-| Tax | 3 per point |
+| Tax | 3 per point above 15% |
 | Markup | 1 per point |
-| Idle workers | 2 per worker |
+| Idle workers | 1 per point of the workforce idle above 10% |
 | Unpaid public workers | 5 per worker |
 | Rent | 1 per silver |
 | Houses sold | 10 per house |
@@ -182,14 +182,14 @@ What changes hands follows the building's kind:
 
 | Kind | The owner receives | Who may buy (`buyers` in `buildings.json`) |
 | --- | --- | --- |
-| House | Rent each payday from household savings: 5 s at Tier 1, 10 s at Tier 2 (about a fifth of a Tier 2 house's wage) | Aristocrats |
+| House | Rent each payday from household savings: 2 s at Tier 1, 5 s at Tier 2 (fixed amounts; 10 s made every rented house fall back to Settlers in the soak, §14) | Aristocrats |
 | Producer | The owner's share: 20% of the labour part of each sale. The price is unchanged, so wages fall | Fields: aristocrats. Mill, bakery, woodcutter: industrialists. *Town:* printing press, theatre: cultural elite |
-| Storehouse | The owner's share: 20% of the markup on each household sale, which would otherwise pay carrier wages. Also any surplus above the purse cap, which rarely builds up | Middle class |
+| Storehouse | The owner's share: 20% of the markup on each household sale, which would otherwise pay carrier wages. Also any surplus above the purse cap, which rarely builds up | Nobody in villages: the middle class lobbies instead of buying. The sim still supports an owned storehouse |
 
 Wells and services (`"service": true` in `buildings.json`, such as the forester) are not for sale. Union halls and alehouses belong to their faction as soon as they are built.
 
 - **Price** = book value × favour multiplier. The multiplier runs from 0.75 at −100 favour, through 1.0 at 0, to 1.5 at +100. A faction can pay only what its coffers hold.
-  - A house's book value is 12 paydays of its rent: 120 s at Tier 2.
+  - A house's book value is 12 paydays of its rent: 60 s at Tier 2.
   - A workshop's or storehouse's book value is its construction price plus the silver in its purse. The purse goes with it.
 - **Who starts a sale.** The player can choose "Offer for sale" in the inspector, which lists the bids. Factions also make offers on their own (§5.3).
 - **Buy-back.** The Crown can buy property back at its current sale price. The owner loses 15 favour.
@@ -263,7 +263,7 @@ Links to VILLAGERS.md §5.6:
 - **When frustration decays.** Union favour reads unpaid workers over the last 6 paydays, so the effect fades. `public_frustration` stays as a lifetime record.
 - It also gives a reason to let the player set the markup: the middle class wants it high and the working class wants it low.
 
-**Conservation.** The treasury, the payroll, every building's silver and every faction's coffers always sum to the founding treasury plus the factions' endowments. Endowments are starting money that lets a faction make its first offer. Suggested amounts: aristocrats 2 g, industrialists 1 g, middle class 0.5 g, all others 0 s. Each endowment arrives with its faction (§13).
+**Conservation.** The treasury, the payroll, every building's silver and every faction's coffers always sum to the founding treasury plus the factions' endowments. Endowments are starting money that lets a faction make its first offer. Amounts: aristocrats 2 g, industrialists 1 g, the middle class, unions and populists 50 s each, the cultural elite 0 s. Each endowment arrives with its faction (§13).
 
 ## 8. Villages and towns
 
@@ -365,6 +365,13 @@ Phase 1 is broken into work items in [PLAN-factions.md](PLAN-factions.md).
 4. **Factions bring outside money.** Each brings an endowment when it arrives, and the money total grows by that amount.
 5. **No formal backing.** Factions are pleased or displeased by the player's choices; there is no endorsement.
 
+**Decided 15 October 2026, after the first soak (§14):**
+
+6. **The middle class is a class, not a faction of owners.** It does not buy buildings. Its money goes on lobbying (pledges). Nobody buys a storehouse in a village.
+7. **Rent is a fixed amount per tier,** now 2 s at Tier 1 and 5 s at Tier 2.
+8. **Every faction arrives with funds.** The unions and populists bring 50 s each, so they can make offers before they have members.
+9. **Tax upsets the working class only above the default 15%,** and idle workers count as a share of the workforce above 10%, so the effect does not grow with village size.
+
 **Assumed for phase 1, open to change:**
 
 - Pledges lock the levers they cover.
@@ -372,6 +379,23 @@ Phase 1 is broken into work items in [PLAN-factions.md](PLAN-factions.md).
 
 **Still open (later phases):**
 
+- Where the middle class's money comes from: answered 15 October 2026. Middle-class houses (the Master's house) belong to it and pay 5% dues (docs/PLAN-job-classes.md).
 - Is the press tone too indirect (town)?
 - Should elites fund the populists (phase 2)?
 - Should towns have a ban on unions, modelled on the Combination Acts?
+
+## 14. Soak results (15 October 2026)
+
+`tools/faction_soak.gd` runs the economy test village (`Scenario.economy_test`: 8 homesteads, both services, every Tier 2 chain) for 60 minutes on seed 73. `--split-halls` puts the union hall at the west end of the north-east street and the alehouse at its east end. The test village's own `--halls` puts both near the starter house, where they reach almost none of the street.
+
+| Target (§11) | Result |
+| --- | --- |
+| No hall or alehouse: at least half the Villager houses unaligned at minute 30 | Met: 8 of 8 |
+| A hall and an alehouse each serving half the houses: both factions hold members at minute 60 | Met: 2 union, 2 populist, 4 unaligned |
+| No deals: every faction between −30 and +30 | Aristocrats and middle class met. Unions −31 to −47, populists −22 to −35 |
+| Every house sold: unions below −25 within 15 minutes, Tier 2 holds | Met: unions −100 by minute 10; all 8 houses stay Villagers |
+| Every union offer accepted, 3 or more union houses: at least 1 g per 20 minutes | Met with 2 union houses: 1 g 29 s per 20 minutes |
+
+- **The working class's favour shortfall is the test village.** 38 of its 84 workers are idle (a Villager house supplies 10 workers, and the village has 34 jobs), which costs each working-class faction 35. Unpaid public workers cost the unions another 12–23.
+- **Accepting the unions' tax cap cuts treasury income,** so public workers go unpaid more often and the unions' own target falls.
+- **Before the changes in §13 items 6–9,** the unions sat at −100 and the populists at −91 with no deals. No house ever joined (the pulls stayed within 3 of each other), the unions and populists never had silver to offer, and rent of 10 s sent every rented house back to Settlers within 10 minutes.

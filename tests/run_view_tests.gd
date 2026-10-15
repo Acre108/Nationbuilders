@@ -125,6 +125,7 @@ func _run() -> void:
 	_check_weather_audio()
 	await _check_treasury()
 	await _check_factions()
+	await _check_food_overlay()
 	await _click(view.hud.build_button.get_global_rect().get_center())
 	check(view.hud.build_menu.visible and view.hud.category_list.visible and not view.hud.building_list.visible, "Build button opens category list")
 	check(view.hud.build_category_buttons.keys() == ["housing","logistics","resources","food"], "Build categories follow content order")
@@ -163,6 +164,10 @@ func _run() -> void:
 	check(view.selected_uid == view.sim.grid.occupied.get(_cell(15,24)) and view.hud.side.visible, "Click opens detailed building inspector")
 	var production_info: String = view.hud.inspector.get_parsed_text()
 	check("Recipe" in production_info and "Input" in production_info and "Output" in production_info and "Workers" in production_info and "Cycle" in production_info, "Production inspector exposes recipe, slots, workforce and cycle")
+	view.sim.step(1)
+	view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
+	var staffed_info: String = view.hud.inspector.get_parsed_text()
+	check(not view.sim.buildings[view.selected_uid].staffed or ("Families" in staffed_info and "Homestead" in staffed_info), "Production inspector names the families its workers come from")
 	await _click(view.hud.close_inspector.get_global_rect().get_center())
 	check(not view.hud.side.visible and view.selected_uid == -1, "Inspection close button clears selection")
 	await _click(view.hud.demolish_button.get_global_rect().get_center())
@@ -196,7 +201,7 @@ func _run() -> void:
 	check(not view.hud.build_buttons.mill.disabled and not view.hud.build_buttons.bakery.disabled, "House upgrade unlocks mill and bakery in menu")
 	await _click_cell(_cell(21,21))
 	var house_info: String = view.hud.inspector.get_parsed_text()
-	check("Tier 2" in house_info and "Needs" in house_info and "Bread" in house_info and "Workers provided" in house_info, "House inspector shows current tier, needs and workforce")
+	check("Tier 2" in house_info and "Needs" in house_info and "Bread" in house_info and "Family" in house_info and "working adult" in house_info and ("Jobs" in house_info or "no wages" in house_info), "House inspector shows current tier, needs, its family and their jobs")
 	check("Happiness" in house_info and "Pantry" in house_info and "Savings" in house_info and "Wage" in house_info and not view.hud.workers_button.visible, "House inspector shows happiness, pantry and household money, with no workers switch")
 	await _key(KEY_ESCAPE)
 	await _choose_build("mill")
@@ -232,6 +237,7 @@ func _run() -> void:
 	await _click_cell(_cell(17,21))
 	var storage_info: String = view.hud.inspector.get_parsed_text()
 	check("Storage" in storage_info and "Carriers" in storage_info and "Bread" in storage_info and "treasury" in storage_info, "Storehouse inspector exposes inventory, carrier activity and the treasury")
+	check("Storekeeper" in storage_info and "needs a middle-class family" in storage_info, "Storehouse inspector says its storekeeper's job needs a middle-class family")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/inspection-storehouse.png")
 	await _key(KEY_ESCAPE)
@@ -534,3 +540,51 @@ func _key(code: Key) -> void:
 
 func _cell(x: int,y: int) -> Vector2i:
 	return Vector2i(x,y)+preload("res://sim/scenario.gd").offset(view.sim)
+## Natural food on the land (docs/WILDLIFE.md): wild berry bushes and game are
+## drawn where the sim has them, and the food overlay (F7) marks fertile soil,
+## berries, the fishing shore and each range's game.
+func _check_food_overlay() -> void:
+	var hud = view.hud
+	var sim = view.sim
+	view._sync_view()
+	check(sim.forage.bushes.size() > 100 and view.forage_layer.bushes.size() == sim.forage.bushes.size(), "Every wild berry bush is drawn (%d)" % sim.forage.bushes.size())
+	check(view.wildlife_layer.animals.size() == sim.wildlife.total("deer") + sim.wildlife.total("boar"), "Every deer and boar is drawn (%d)" % view.wildlife_layer.animals.size())
+	var cell: Vector2i = sim.forage.bushes.keys()[0]
+	var fruit: int = sim.forage.bushes[cell]
+	sim.forage.bushes[cell] = 0
+	view._sync_view()
+	var berries := view.forage_layer.bushes[cell].find_child("Berries", true, false) as Node3D
+	check(berries != null and not berries.visible, "A picked bush shows no berries")
+	sim.forage.bushes[cell] = fruit
+	view._sync_view()
+	check(berries != null and berries.visible, "Ripe berries show again")
+	await _key(KEY_F7)
+	check(view.food_overlay.visible and hud.food_legend.visible and hud.food_overlay_button.button_pressed, "F7 shows the food overlay and its key")
+	check(view.food_overlay.land.mesh != null and view.food_overlay.berries.mesh != null and view.food_overlay.game.get_child_count() > 10, "The overlay marks fertile soil, berries and game (%d ranges)" % view.food_overlay.game.get_child_count())
+	var legend: String = hud.food_legend.get_child(0).get_parsed_text()
+	check("Fertile soil" in legend and "Wild berries" in legend and "Fishing shore" in legend, "The food overlay key names its marks")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/food-overlay-hud.png")
+	await _key(KEY_F7)
+	check(not view.food_overlay.visible and not hud.food_legend.visible and not hud.food_overlay_button.button_pressed, "F7 hides the food overlay")
+	# The food button sits on the top row and opens its breakdown and the overlay.
+	var food_rect: Rect2 = hud.food_button.get_global_rect()
+	check(hud.food_button.visible and hud.food_button.text.begins_with("Food") and food_rect.position.x >= hud.stock_bar.get_global_rect().end.x and food_rect.end.x < hud.map_button.get_global_rect().position.x, "The food button sits between the stock bar and the top-right buttons (%s)" % hud.food_button.text)
+	await _click(food_rect.get_center())
+	hud.refresh(sim,-1,"inspect")
+	var breakdown: String = hud.food_text.get_parsed_text()
+	check(hud.food_menu.visible and view.food_overlay.visible and hud.food_map_toggle.button_pressed, "The food button opens its breakdown and the food overlay")
+	check("Needs" in breakdown and "By food" in breakdown and "needed" in breakdown, "The breakdown shows needs and each food's income and use")
+	check(hud.blocks_mouse(hud.food_menu.get_global_rect().get_center()), "The food breakdown blocks clicks behind it")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/food-balance-view.png")
+	await _key(KEY_ESCAPE)
+	check(not hud.food_menu.visible and not hud.food_button.button_pressed, "Escape closes the food breakdown")
+	await _key(KEY_F7)
+	check(not view.food_overlay.visible and not hud.food_map_toggle.button_pressed, "F7 still hides the overlay afterwards")
+	# Placing a field shows how fertile its ground is.
+	await _choose_build("farm")
+	await _move_cell(_cell(12,15))
+	var soil := view.ghost_root.find_child("Soil", true, false) as Label3D
+	check(soil != null and "% speed" in soil.text, "A field's ghost shows its soil and speed (%s)" % (soil.text if soil != null else "none"))
+	await _key(KEY_ESCAPE)

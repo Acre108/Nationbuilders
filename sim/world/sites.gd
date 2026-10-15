@@ -3,6 +3,7 @@ extends RefCounted
 ## provide the default coastal village and a fixed site with real relief.
 const SitePackage = preload("res://sim/world/site_package.gd")
 const HexMath = preload("res://sim/world/hex_math.gd")
+const IntNoise = preload("res://sim/world/int_noise.gd")
 const NAMES: Array[String] = ["first_bread", "terraces"]
 
 static func named(site_name: String, rng):
@@ -43,7 +44,8 @@ static func first_bread(rng, size: Vector2i = SitePackage.DEFAULT_SIZE):
 				tile = "rock"
 			var index := site.index(Vector2i(x, y))
 			site.terrain[index] = tile
-			var fertile: bool = x > 10 and x < 20 and y > 13 and y < 24 if reference else site.settlement_clearance.has_point(Vector2i(x,y))
+			# The clearing is tilled land; loamy patches lie out in the meadows too.
+			var fertile: bool = x > 10 and x < 20 and y > 13 and y < 24 if reference else (site.settlement_clearance.has_point(Vector2i(x,y)) or IntNoise.fbm(woodland_seed, 613, Vector2(x,y) / 9.0, 3) > 0.56)
 			site.deposits[index] = "timber" if tile == "forest" else ("fertile_soil" if tile == "grass" and fertile else "")
 	return site
 

@@ -48,7 +48,9 @@ func _chain(t) -> void:
 		if first_bread == 0 and int(sim.produced.get("bread", 0)) > 0:
 			first_bread = sim.tick
 	t.check(first_bread > 0 and first_bread <= 1800, "Bread produced within 3 simulated minutes")
-	t.check(sim.stock("bread") > 0, "Bread physically delivered to storehouse")
+	# Six family cottages eat bread as fast as one bakery makes it, so it may
+	# reach their pantries rather than pile up in the storehouse.
+	t.check(sim.stock("bread") > 0 or int(sim._eaten.get("bread", 0)) > 0, "Bread physically delivered to the storehouse or the houses")
 	for good in ["wheat","flour","bread","water","logs"]:
 		t.check(carried_goods.has(good), "Carriers visibly transport " + good)
 	var house = _find(sim, "house")
@@ -88,8 +90,8 @@ func _placement(t) -> void:
 	t.check(not sim.place("unknown", Vector2i(15,15)), "Reject unknown building id")
 	t.check(not sim.place("house", Vector2i(sim.grid.width-1,sim.grid.height-1)), "Reject out-of-bounds footprint")
 	t.check(not sim.place("house", Vector2i(sim.grid.width-5,20)), "Reject water placement")
-	t.check(sim.place("house", Vector2i(15,15)), "Place full house footprint")
-	t.check(not sim.place("well", Vector2i(16,16)), "Reject footprint overlap")
+	t.check(sim.place("house", Vector2i(15,15)), "Place full cottage footprint (2×1)")
+	t.check(not sim.place("well", Vector2i(16,15)), "Reject footprint overlap")
 	var before: Dictionary = sim.snapshot()
 	t.check(not sim.place_road([Vector2i(14,15),Vector2i(15,15)]), "Reject mixed valid/invalid road batch")
 	t.check(JSON.stringify(before) == JSON.stringify(sim.snapshot()), "Invalid road command is atomic")
@@ -97,7 +99,7 @@ func _placement(t) -> void:
 	t.check(not sim.place("well", Vector2i(14,15)), "Cannot build on road")
 	t.check(sim.grid.astar(Vector2i(14,15),Vector2i(14,16)).size() == 2, "A* follows road neighbors")
 	t.check(sim.grid.astar(Vector2i(14,15),Vector2i(13,15)).is_empty(), "A* never crosses non-road tiles")
-	t.check(sim.demolish(Vector2i(16,16)) and not sim.grid.occupied.has(Vector2i(15,15)), "Demolish any footprint cell clears entire building")
+	t.check(sim.demolish(Vector2i(16,15)) and not sim.grid.occupied.has(Vector2i(15,15)), "Demolish any footprint cell clears entire building")
 
 func _disconnection(t) -> void:
 	var sim = _fixture()
@@ -106,6 +108,9 @@ func _disconnection(t) -> void:
 	sim.step(350)
 	var house = sim.buildings[sim.grid.occupied[Vector2i(26,21)]]
 	t.check(house.tier == 2, "House starts disconnection check as Villagers")
+	# Six mouths (Needs.REFERENCE_MOUTHS) eat at the tier's own rate.
+	house.adults = 2
+	house.children = 8
 	# A disconnected isolated house must not consume remote stock.
 	for attempt in 100:
 		for tile in sim.grid.access(house):
@@ -254,10 +259,10 @@ func _money(t) -> void:
 	sim.place("storehouse",Vector2i(12,21))
 	var store = _find(sim,"storehouse")
 	t.check(sim.treasury == Economy.FOUNDING_TREASURY - Economy.STOREHOUSE_CAPITAL and store.silver == Economy.STOREHOUSE_CAPITAL, "Founding logs are free; a storehouse gets trading capital")
-	var logs_value: int = 6 * sim.price("logs")
+	var logs_value: int = int(sim.db.buildings.house.cost.logs) * sim.price("logs")
 	sim.place("house",Vector2i(20,21))
 	var house = _find(sim,"house")
-	t.check(store.silver == Economy.STOREHOUSE_CAPITAL + logs_value and house.silver == Economy.HOUSEHOLD_GRANT, "The treasury buys a house's logs from the storehouse and gives it a starting purse")
+	t.check(store.silver == Economy.STOREHOUSE_CAPITAL + logs_value and house.silver == Economy.house_grant(sim, house) and house.silver == Economy.GRANT_PER_ADULT * sim.family_adults(house), "The treasury buys a cottage's logs from the storehouse and gives its family a purse of 20 s per adult")
 	_money_conserved(t,sim,"construction")
 	var saved: int = sim.treasury
 	sim.treasury = 0
@@ -287,7 +292,8 @@ func _money(t) -> void:
 		fed = fed and house_two.needs_met.has(good)
 	t.check(house_two.tier == 2 and fed, "Wages from the chain keep a Villager house fed")
 	_conservation(t,chain,"priced chain")
-	# Payroll is shared between houses by the workers each provides.
+	# Payroll nobody earned is shared between houses by the workers each
+	# provides (wages a family earned go to that family; see test_labour.gd).
 	t.check(chain.place("house",Vector2i(21,23)) or chain.place("house",Vector2i(15,15)), "Place a second household")
 	var houses: Array = []
 	for building in chain.buildings.values():
@@ -295,10 +301,17 @@ func _money(t) -> void:
 			houses.append(building)
 	for house_row in houses:
 		house_row.tier = 1
+		house_row.earned = 0
 	chain.treasury -= 101 - chain.payroll
 	chain.payroll = 101
 	chain.economy.payday(chain)
-	t.check(houses[0].last_wage + houses[1].last_wage == 101 and absi(houses[0].last_wage - houses[1].last_wage) <= 1, "Equal houses get equal shares of the payroll")
+	var adults: Array = houses.map(func(h): return chain.family_adults(h))
+	var paid := 0
+	var fair := true
+	for index in houses.size():
+		paid += houses[index].last_wage
+		fair = fair and absi(houses[index].last_wage - 101 * adults[index] / adults.reduce(func(a, b): return a + b)) <= 1
+	t.check(paid == 101 and fair, "Unearned payroll is shared by each family's workers: %s" % str(houses.map(func(h): return h.last_wage)))
 	_money_conserved(t,chain,"payroll shares")
 	t.check(chain.set_tax_percent(0) and not chain.set_tax_percent(101), "Tax rate rejects values above the limit")
 	# Only households pay the storehouse markup; a workshop buys at chain price.
@@ -490,13 +503,18 @@ func _happiness_effects(t) -> void:
 	var house = _find(sim,"house")
 	t.check(Needs.settled(house) == -1 and Needs.morale(sim) == 100, "Before a full cycle a house has no settled happiness and morale is full")
 	house.tier = 2
+	# Six mouths (Needs.REFERENCE_MOUTHS) eat at the tier's own rate.
+	house.adults = 2
+	house.children = 8
 	for index in 1500:
 		for good in ["water","bread","firewood"]:
 			if house.input.count(good) == 0: house.input.add(good)
 		sim.step(1)
 	t.check(house.tier == 2 and Needs.settled(house) == 75 and house.happiness_history.size() == 3 and not house.needs_met.has("chapel"), "One missing need (no chapel) leaves a house unhappy but not demoted: settled %d" % Needs.settled(house))
 	t.check(Needs.morale(sim) == 75, "Village morale is the houses' settled happiness")
-	for index in 2000:
+	# Small families eat on longer cycles (Needs.consume_ticks), so allow time
+	# for three unhappy cycles plus the downgrade delay.
+	for index in 6000:
 		if house.input.count("water") == 0: house.input.add("water")
 		sim.step(1)
 		if house.tier == 1: break
@@ -602,7 +620,7 @@ func _economy_village(t) -> void:
 		jobs += int(building.definition.get("carriers", building.definition.workers))
 		t.check(not sim.grid.access(building).is_empty(), "Economy village %s at %s touches a road" % [building.definition.id, building.cell])
 		if building.definition.kind == "house": houses.append(building)
-	t.check(houses.size() == 8, "Economy village has eight homesteads")
+	t.check(houses.size() == Scenario.economy_houses(), "Economy village has its %d family houses" % Scenario.economy_houses())
 	t.check(jobs <= sim.workforce(), "Economy village staffs every job and carrier at Settlers: %d of %d" % [jobs, sim.workforce()])
 	for row in sim.db.buildings.values():
 		if Economy.is_public(row): t.check(ids.has(row.id), "Economy village has the %s service" % row.id)
@@ -617,8 +635,9 @@ func _economy_village(t) -> void:
 	for house in houses:
 		for service in Needs.counted_services(sim.db.tiers[2]):
 			t.check(sim.serves(house, service), "Economy village house at %s has a %s in range" % [house.cell, service])
-	sim.step(1800 - sim.tick)
-	t.check(houses.all(func(house): return house.tier == 2), "Every economy village house reaches Villagers within 3 minutes")
+	# Thirty-odd family houses fill their pantries one delivery at a time.
+	sim.step(2400 - sim.tick)
+	t.check(houses.all(func(house): return house.tier == 2), "Every economy village house reaches Villagers within 4 minutes")
 	_money_conserved(t, sim, "economy village")
 
 func _place_first(sim, id: String, cells: Array) -> bool:

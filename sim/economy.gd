@@ -2,16 +2,18 @@ extends RefCounted
 ## Village money, held in whole silver; 100 silver make a gold. Every link in a
 ## chain pays the one before it, so a good costs its inputs plus the labour of
 ## the building that made it. A producer forwards that labour to the payroll,
-## which households share at payday. Storehouses sell to households at a
-## markup, which pays their carriers: it goes to the payroll like a producer's
-## labour. A storehouse keeps a capped trading purse. The treasury is filled by
-## tax on wages and by storehouse surpluses above that cap, and spends gold on
-## construction and public services. The player can set part of it aside: a
+## credited to the families whose members made it, who are paid at payday.
+## Storehouses sell to households at a markup, which pays their storekeeper and
+## carriers: it goes to the payroll like a producer's labour. A storehouse keeps
+## a capped trading purse. The treasury is filled by tax on wages and by
+## storehouse surpluses above that cap, and spends gold on construction and
+## public services. The player can set part of it aside: a
 ## public pay reserve and a capital reserve, each closed to the other's spending.
 ## Money is closed: treasury, payroll, every building's silver and every
 ## faction's coffers always sum to the founding treasury plus the outside money
 ## arriving factions brought (factions.gd). Reserves are part of the treasury,
 ## not extra money.
+const Labour = preload("res://sim/labour.gd")
 const SILVER_PER_GOLD := 100
 ## One worker's labour for one payday, in silver.
 const WAGE := 10
@@ -23,8 +25,10 @@ const MAX_TAX_PERCENT := 50
 ## Storehouses sell to households at this markup on the chain price.
 const DEFAULT_MARKUP_PERCENT := 10
 const MAX_MARKUP_PERCENT := 100
-## Starting money the treasury gives a new household or storehouse.
-const HOUSEHOLD_GRANT := 50
+## Starting money the treasury gives a new household, per working adult in
+## its family (decided 15 Oct 2026: village houses hold one family of 1–2
+## adults), and a new storehouse.
+const GRANT_PER_ADULT := 20
 const STOREHOUSE_CAPITAL := 100
 ## A storehouse keeps trading silver up to this cap; the rest goes to the
 ## treasury at payday.
@@ -119,16 +123,18 @@ func purse_cap(sim, store) -> int:
 static func is_public(row: Dictionary) -> bool:
 	return bool(row.get("service", false))
 
-## A service's wages for one payday.
+## A service's wages for one payday: each job at its class's wage (labour.gd).
 static func upkeep(row: Dictionary) -> int:
-	return WAGE * int(row.workers) if is_public(row) else 0
+	return Labour.service_pay(row) if is_public(row) else 0
 
 ## Working money the treasury hands a new building: a household's first purse,
 ## a storehouse's trading purse, or enough for a workshop to fill its inputs once.
 func capital(sim, row: Dictionary) -> int:
 	match row.kind:
 		"house":
-			return HOUSEHOLD_GRANT
+			# The largest family the house type holds; place() then pays the
+			# family actually drawn (house_grant).
+			return GRANT_PER_ADULT * int(row.get("family", {}).get("adults", [1, 1])[1])
 		"storehouse":
 			return STOREHOUSE_CAPITAL
 		"producer":
@@ -207,14 +213,16 @@ func settle(sim, buyer, seller_uid: int, good: String) -> void:
 	var share: int = sim.factions.take_owner_share(sim, seller, work)
 	sim.payroll += work - share
 	seller.wages_paid += work - share
+	# The families who made or carried the good earned it.
+	Labour.credit(sim, seller, work - share)
 	seller.silver += cost - work
 
 ## At payday, storehouse surpluses above the purse cap go to the treasury, or
 ## to the owner of a faction-owned storehouse, and
 ## the treasury pays public workers from the public pay reserve, then free gold.
 ## Unpaid public workers keep working, but each unpaid worker adds one to
-## their frustration. The payroll is then shared between houses by the workers
-## each provides, and tax is withheld into the treasury. The factions' payday
+## their frustration. Each family is then paid what its members earned
+## (labour.gd), and tax is withheld into the treasury. The factions' payday
 ## runs last, before the period joins the ledger.
 func payday(sim) -> void:
 	var period: Dictionary = sim.period
@@ -239,6 +247,7 @@ func payday(sim) -> void:
 		sim.treasury -= paid
 		sim.payroll += paid
 		building.last_wage = paid
+		Labour.credit(sim, building, paid)
 		period.public_pay += paid
 		if paid < due:
 			var unpaid_workers := ceili(float(due - paid) / WAGE)
@@ -255,26 +264,17 @@ func payday(sim) -> void:
 
 func _pay_households(sim) -> void:
 	var houses: Array = []
-	var workers := 0
 	for building in sim.buildings.values():
 		if building.definition.kind == "house":
 			houses.append(building)
-			workers += int(sim.db.tiers[building.tier].workers_per_house)
 	if houses.is_empty():
 		return
-	var pool: int = sim.payroll
-	var shares: Array[int] = []
-	var spare := pool
-	for house in houses:
-		var share := pool * int(sim.db.tiers[house.tier].workers_per_house) / workers
-		shares.append(share)
-		spare -= share
-	var offset: int = (sim.tick / sim.PAYDAY_TICKS) % houses.size()
-	for index in spare:
-		shares[(offset + index) % houses.size()] += 1
+	# Each family is paid what its members earned (labour.gd).
+	var shares: Array[int] = Labour.wages(sim, houses)
 	sim.payroll = 0
 	for index in houses.size():
 		var house = houses[index]
+		house.earned = 0
 		house.last_wage = shares[index]
 		house.last_tax = house.last_wage * sim.tax_percent / 100
 		house.silver += house.last_wage - house.last_tax
@@ -302,3 +302,8 @@ static func _top_up_service_reserve(sim) -> void:
 		upkeep_due += upkeep(building.definition)
 	var short: int = SERVICE_RESERVE_PAYDAYS * upkeep_due - sim.public_reserve
 	sim.public_reserve += clampi(short, 0, free_gold(sim))
+
+## A new house's starting purse: GRANT_PER_ADULT for each working adult of
+## the family drawn for it.
+static func house_grant(sim, house) -> int:
+	return GRANT_PER_ADULT * maxi(1, sim.family_adults(house))

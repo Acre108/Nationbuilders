@@ -6,7 +6,7 @@ Villagers are still counted per house, as in [DESIGN.md](DESIGN.md). Individual 
 
 ## 1. Workforce
 
-- The village has one pool of workers: 4 founding adults plus each house's `workers_per_house` for its tier (`tiers.json`).
+- Workers belong to families (decided 15 October 2026, docs/PLAN-job-classes.md). Each village house holds one family, whose working adults are its workers; the 4 founding adults live in the first house. Jobs name a class (`jobs` in `buildings.json`). A worker may take a job of their class or a lower one, never a higher one, and jobs go round the families of a class so each family gets one before any gets a second (`sim/labour.gd`).
 - Buildings are staffed in placement order. A building is staffed only when the whole crew it needs (`workers` in `buildings.json`) is free.
 - **The player can stop any building that employs workers** (`set_workers_enabled(uid, false)`, or **Stop workers** in the inspector). A stopped building:
   - releases its workers to the next buildings in order;
@@ -108,7 +108,7 @@ Prices are worked out from `buildings.json` when the sim starts. A good that no 
 - **Wages are paid per sale.** When a producer sells, it keeps the input part of the price to buy its next inputs. It passes the labour part to the **payroll**.
   - A workshop's purse therefore stays level, and a half-idle bakery never goes broke.
   - Wages follow what the village actually sells. Goods nobody buys earn no one anything.
-- **Payday** (every 20 s) shares the payroll between houses by the workers each provides. Spare silver rotates between houses.
+- **Payday** (every 20 s) pays each family what its members earned: a producer's labour goes to its crew's families, a storehouse's markup to its storekeeper (30%) and carriers, and a service's pay to its staff. **A family with no job earns nothing.** Silver nobody earned (a sale while a building stood unstaffed) is shared between houses by workers, with spare silver rotating, as all wages were before 15 October 2026.
 - **Tax** is withheld at payday into the treasury: 15% of wages by default (raised from 10% on 15 October 2026; see 5.5), set in the Treasury panel (5.1). Tax and storehouse surpluses (5.3) are the treasury's income.
 - **Public services.** Buildings marked `"service": true` in `buildings.json` (the forester so far) sell nothing. The treasury pays their workers at each payday: 10 s per worker, from the public pay reserve first (5.2). Unpaid public workers keep working, and their frustration grows. Content validation requires every producer that sells nothing to be a service.
 

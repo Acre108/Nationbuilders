@@ -61,7 +61,7 @@ func _data(t) -> void:
 	var endowments := {}
 	for id in db.factions:
 		endowments[id] = int(db.factions[id].endowment)
-	t.check(endowments == {"union":0,"populist":0,"middle":50,"industry":100,"gentry":200,"culture":0}, "Endowments: gentry 2 g, industry 1 g, middle 50 s")
+	t.check(endowments == {"union":50,"populist":50,"middle":50,"industry":100,"gentry":200,"culture":0}, "Endowments: gentry 2 g, industry 1 g, 50 s for the others in villages")
 	t.check(int(db.factions.union.dues_percent) == 5 and int(db.factions.populist.dues_percent) == 2, "Union and populist dues")
 	t.check(not Factions.in_villages(db.factions.culture), "The cultural elite is a town faction")
 	t.check(db.tiers[1]["class"] == "" and db.tiers[2]["class"] == "working", "Settlers have no class; Villagers are working class")
@@ -128,7 +128,7 @@ func _working_class(t) -> void:
 	var promoted: bool = sim.unlocked_tier == 2
 	t.check(arrived > 0 and promoted, "The unions arrive once a house is Villagers (tick %d)" % arrived)
 	t.check(sim.factions.present("populist"), "The populists arrive with the unions")
-	t.check(sim.factions.coffers.union == 7 and sim.factions.coffers.populist == 0 and sim.outside_money == 257, "The arrival brings each endowment into coffers and outside money")
+	t.check(sim.factions.coffers.union == 7 and sim.factions.coffers.populist == 50 and sim.outside_money == 307, "The arrival brings each endowment into coffers and outside money")
 	t.check(_has_event(sim, "Trade unions") and _has_event(sim, "Populists"), "Union and populist arrivals are announced")
 	t.check(not sim.factions.present("culture"), "The cultural elite never arrives in a village")
 	_money(t, sim, "working-class arrival")
@@ -179,7 +179,7 @@ func _snapshot(t) -> void:
 	sim.factions.coffers.union = 12
 	sim.outside_money += 12
 	var state: Dictionary = sim.snapshot()
-	t.check(state.factions.keys() == ["gentry","middle","union","populist"] and state.outside_money == 262, "The snapshot holds the factions in order of arrival and the outside money")
+	t.check(state.factions.keys() == ["gentry","middle","union","populist"] and state.outside_money == 362, "The snapshot holds the factions in order of arrival and the outside money")
 	var restored = Sim.from_snapshot(state)
 	t.check(restored != null and JSON.stringify(restored.snapshot()) == JSON.stringify(state), "Factions and outside money round-trip through a snapshot")
 	if restored != null:
@@ -236,9 +236,9 @@ func _legacy_save(t) -> void:
 		carriers.append(Campaign._state(carrier))
 	var sim_state := Campaign._state(sim)
 	sim_state.erase("outside_money")
-	# Before factions, no arrival was announced. The loaded save's events
-	# replace the founding ones, so its founding factions have no "arrived"
-	# event; item 6 (saves) may add one on migration.
+	# Before factions, no arrival was announced. Migration keeps it that way:
+	# the save's events replace the founding ones, and every faction it brings
+	# arrives silently.
 	var events: Array[String] = []
 	for event in sim.events:
 		if "arrived" not in event:
@@ -259,10 +259,11 @@ func _legacy_save(t) -> void:
 	t.check(loaded.load_save(path), "A save from before factions loads: " + loaded.last_error)
 	if loaded.village != null:
 		var village = loaded.village
-		t.check(village.factions.coffers == {"gentry":200,"middle":50} and village.outside_money == 250, "A pre-faction save gets the site's factions with their endowments: %s" % str(village.factions.coffers))
+		t.check(village.factions.coffers == {"gentry":200,"middle":50,"union":50,"populist":50} and village.outside_money == 350, "A pre-faction save gets the site's factions, and its Villager house the unions and populists, with their endowments: %s" % str(village.factions.coffers))
+		t.check(not village.events.any(func(event): return "arrived" in event), "They arrive silently")
 		_money(t, village, "pre-faction save")
 		village.step(1)
-		t.check(village.factions.present("union") and village.factions.present("populist"), "Its Villager house brings the unions and populists on the next tick")
+		t.check(not village.events.any(func(event): return "arrived" in event), "and nobody arrives on the next tick")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 ## `buyers` in buildings.json names known factions, never on a service or well.
@@ -273,10 +274,11 @@ func _buyers_data(t) -> void:
 	for id in db.buildings:
 		if db.buildings[id].has("buyers"):
 			buyers[id] = db.buildings[id].buyers
-	# Houses, fields and hunting rights go to the gentry, the storehouse to the
-	# middle class and every other workshop to industry.
-	var rule := buyers.keys().all(func(id): return buyers[id] == (["gentry"] if id in ["house","farm","pig_farm","hunter"] else (["middle"] if db.buildings[id].kind == "storehouse" else ["industry"])))
-	t.check(rule and buyers.has("house") and buyers.has("storehouse") and buyers.has("mill"), "Buyers: houses and fields to the gentry, workshops to industry, storehouses to the middle class: %s" % str(buyers))
+	# Houses, fields and hunting rights go to the gentry and every other workshop
+	# to industry. The middle class lobbies rather than buys, so nobody buys a
+	# storehouse.
+	var rule := buyers.keys().all(func(id): return buyers[id] == (["gentry"] if id in ["house","farm","pig_farm","hunter"] else ["industry"]))
+	t.check(rule and buyers.has("house") and buyers.has("mill") and not buyers.has("storehouse"), "Buyers: houses and fields to the gentry, workshops to industry, storehouses to nobody: %s" % str(buyers))
 	var goods: Array = db.goods.values().duplicate(true)
 	var tiers: Array = db.tiers.values().duplicate(true)
 	var factions: Array = db.factions.values().duplicate(true)
@@ -294,19 +296,19 @@ func _sales(t) -> void:
 	var mill = _find(sim, "mill")
 	var store = _find(sim, "storehouse")
 	t.check(house.tier == 2 and house.owner == "" and mill.owner == "", "Buildings start as the Crown's")
-	t.check(sim.factions.book_value(sim, house, "gentry") == 12 * 10, "A Tier 2 house's book value is 12 paydays of 10 s rent")
+	t.check(sim.factions.book_value(sim, house, "gentry") == 12 * 5, "A Tier 2 house's book value is 12 paydays of 5 s rent")
 	var farm = _find(sim, "farm")
 	t.check(sim.factions.book_value(sim, mill, "industry") == 8 * sim.price("logs") + mill.silver and sim.factions.book_value(sim, farm, "gentry") == 4 * sim.price("logs") + farm.silver, "A workshop's book value is its logs at chain price plus its purse")
 	t.check(sim.factions.book_value(sim, store, "middle") == 10 * sim.price("logs") + store.silver, "A storehouse's book value includes its trading purse")
 	var row: Dictionary = sim.db.buildings.house.duplicate(true)
 	var shack = load("res://sim/building.gd").new(999, row, Vector2i.ZERO)
-	t.check(sim.factions.book_value(sim, shack, "gentry") == 12 * 5 and sim.factions.sale_price(sim, house, "gentry") == 120, "A Tier 1 house is worth 60 s; with no favour yet the price is book value")
+	t.check(sim.factions.book_value(sim, shack, "gentry") == 12 * 2 and sim.factions.sale_price(sim, house, "gentry") == 60, "A Tier 1 house is worth 24 s; with no favour yet the price is book value")
 	var treasury: int = sim.treasury
 	var coffers: int = sim.factions.coffers.gentry
 	var deals: int = sim.period.deals
 	t.check(sim.sell_building(house.uid, "gentry"), "Sell a house to the gentry: " + sim.last_error)
-	t.check(house.owner == "gentry" and sim.treasury == treasury + 120 and sim.factions.coffers.gentry == coffers - 120 and sim.period.deals == deals + 120, "The gentry pay 120 s from their coffers into the treasury as a deal")
-	t.check(sim.events[-1] == Factions.BUILDING_SOLD % ["Aristocrats", "Homestead", "1 g 20 s", sim.tick], "The sale is announced")
+	t.check(house.owner == "gentry" and sim.treasury == treasury + 60 and sim.factions.coffers.gentry == coffers - 60 and sim.period.deals == deals + 60, "The gentry pay 60 s from their coffers into the treasury as a deal")
+	t.check(sim.events[-1] == Factions.BUILDING_SOLD % ["Aristocrats", house.definition.name, "60 s", sim.tick], "The sale is announced")
 	_money(t, sim, "house sale")
 	var mill_silver: int = mill.silver
 	var mill_price: int = sim.factions.sale_price(sim, mill, "industry")
@@ -318,7 +320,7 @@ func _sales(t) -> void:
 		[9999, "gentry", "Unknown building", "An unknown building cannot be sold"],
 		[store.uid, "culture", "No Cultural elite in the village", "A faction that is not present cannot buy"],
 		[store.uid, "dukes", "No dukes in the village", "An unknown faction cannot buy"],
-		[house.uid, "gentry", "Homestead already belongs to the Aristocrats", "A building is sold only once"],
+		[house.uid, "gentry", "%s already belongs to the Aristocrats" % house.definition.name, "A building is sold only once"],
 		[store.uid, "gentry", "The Aristocrats do not buy a Storehouse", "Only the building's buyers may buy it"],
 		[_find(sim, "well").uid, "gentry", "Well is not for sale", "Wells are never sold"],
 	]
@@ -332,12 +334,14 @@ func _sales(t) -> void:
 	for case in refusals:
 		t.check(not sim.sell_building(case[0], case[1]) and sim.last_error == case[2], "%s: %s" % [case[3], sim.last_error])
 	t.check(JSON.stringify(sim.snapshot()) == state, "A refused sale changes nothing")
-	# The gentry have 80 s left; a second Tier 2 house costs 120 s, a little more
-	# now that the first sale has pleased them.
+	# Leave the gentry 50 s; a second Tier 2 house costs 60 s, a little more now
+	# that the first sale has pleased them.
+	sim.outside_money -= int(sim.factions.coffers.gentry) - 50
+	sim.factions.coffers.gentry = 50
 	var second = _place_house(sim)
 	if second != null:
 		second.tier = 2
-	t.check(second != null and sim.factions.sale_price(sim, second, "gentry") > 120 and not sim.sell_building(second.uid, "gentry") and sim.last_error == "The Aristocrats cannot pay " + Economy.format(sim.factions.sale_price(sim, second, "gentry")), "A faction cannot pay more than its coffers: " + sim.last_error)
+	t.check(second != null and sim.factions.sale_price(sim, second, "gentry") > 60 and not sim.sell_building(second.uid, "gentry") and sim.last_error == "The Aristocrats cannot pay " + Economy.format(sim.factions.sale_price(sim, second, "gentry")), "A faction cannot pay more than its coffers: " + sim.last_error)
 	_money(t, sim, "refused sales")
 
 ## The owner's share of a producer's labour and of a storehouse's markup.
@@ -391,9 +395,9 @@ func _rent_and_dues(t) -> void:
 	var gentry: int = sim.factions.coffers.gentry
 	var union: int = sim.factions.coffers.union
 	sim.factions.payday(sim)
-	t.check(sim.factions.coffers.gentry == gentry + 10 and sim.factions.last_payday.gentry.rent == 10, "A rented Tier 2 house pays the gentry 10 s rent")
+	t.check(sim.factions.coffers.gentry == gentry + 5 and sim.factions.last_payday.gentry.rent == 5, "A rented Tier 2 house pays the gentry 5 s rent")
 	t.check(sim.factions.coffers.union == union + 4 and sim.factions.last_payday.union.dues == 4, "A union house pays 5%% dues on its 85 s wage after tax, to the nearest silver: %d" % (sim.factions.coffers.union - union))
-	t.check(house.silver == silver - 14 and sim.factions.period.gentry.rent == 0, "Both come out of the household's savings, and a new period starts")
+	t.check(house.silver == silver - 9 and sim.factions.period.gentry.rent == 0, "Both come out of the household's savings, and a new period starts")
 	house.aligned = "populist"
 	var populist: int = sim.factions.coffers.populist
 	sim.factions.payday(sim)
@@ -487,7 +491,7 @@ func _demolition(t) -> void:
 	t.check(sim.factions.coffers.industry == coffers + purse and sim.treasury == treasury and sim.period.refunds == refunds, "Its purse returns to the industrialists, not the treasury")
 	_money(t, sim, "demolished mill")
 	var savings: int = house.silver
-	t.check(sim.demolish(house.cell) and sim.treasury == treasury + savings and sim.factions.coffers.gentry == 80, "A rented house's savings are the household's, so they go to the treasury")
+	t.check(sim.demolish(house.cell) and sim.treasury == treasury + savings and sim.factions.coffers.gentry == 140, "A rented house's savings are the household's, so they go to the treasury")
 	_money(t, sim, "demolished rented house")
 
 ## Owners, alignment and flows round-trip; bad ones are rejected.
@@ -501,7 +505,7 @@ func _ownership_snapshot(t) -> void:
 	_fund(sim, house, 300)
 	sim.step(sim.PAYDAY_TICKS + 50)
 	var state: Dictionary = sim.snapshot()
-	t.check(state.factions.gentry.last_payday.rent == 10 and state.factions.union.has("period"), "The snapshot holds each faction's flows")
+	t.check(state.factions.gentry.last_payday.rent == 5 and state.factions.union.has("period"), "The snapshot holds each faction's flows")
 	var restored = Sim.from_snapshot(state)
 	t.check(restored != null and JSON.stringify(restored.snapshot()) == JSON.stringify(state), "Owners, alignment and faction flows round-trip through a snapshot")
 	if restored != null:
@@ -944,16 +948,36 @@ func _paydays(sim, count: int) -> void:
 		sim.factions.payday(sim)
 
 ## Places a building at the first of these layout cells (shifted to the site)
-## that takes it, by default only where it has a road.
+## that takes it, by default only where it has a road. With a road needed and
+## every listed cell taken (layouts change), it takes the nearest free cell with
+## a road, in rings around the first listed cell.
 func _place_at(sim, id: String, cells: Array, need_road: bool = true):
 	var shift: Vector2i = Scenario.offset(sim)
-	for cell in cells:
+	var tried: Array = cells.duplicate()
+	if need_road and not cells.is_empty():
+		for ring in range(1, 15):
+			for dy in range(-ring, ring + 1):
+				for dx in range(-ring, ring + 1):
+					if maxi(absi(dx), absi(dy)) == ring and _touches_road(sim, id, cells[0] + Vector2i(dx, dy) + shift):
+						tried.append(cells[0] + Vector2i(dx, dy))
+	for cell in tried:
 		if sim.placement_error(id, cell + shift).is_empty() and sim.place(id, cell + shift):
 			var building = sim.buildings[sim.next_uid - 1]
 			if not need_road or not sim.grid.access(building).is_empty():
 				return building
 			sim.demolish(building.cell)
 	return null
+
+## Whether a building placed here unturned would have a road along an edge.
+func _touches_road(sim, id: String, cell: Vector2i) -> bool:
+	var size := Vector2i(int(sim.db.buildings[id].footprint[0]), int(sim.db.buildings[id].footprint[1]))
+	for y in range(-1, size.y + 1):
+		for x in range(-1, size.x + 1):
+			var inside_x := x >= 0 and x < size.x
+			var inside_y := y >= 0 and y < size.y
+			if inside_x != inside_y and sim.grid.roads.has(cell + Vector2i(x, y)):
+				return true
+	return false
 
 func _has_text(sim, text: String) -> bool:
 	return text in sim.events
@@ -962,6 +986,9 @@ func _has_text(sim, text: String) -> bool:
 func _village():
 	var db = ContentDB.new()
 	db.load_directory()
+	# No shipped faction buys a storehouse; the owner's-share path for one is
+	# still tested through a test-only buyer.
+	db.buildings.storehouse.buyers = ["middle"]
 	db.biome_factions.heartland = ["gentry","middle","industry"]
 	var sim = Sim.new(73, db)
 	Scenario.starter(sim)
@@ -1096,13 +1123,16 @@ func _stance_terms(t) -> void:
 	var house = _find(sim, "house")
 	sim.tax_percent = 20
 	sim.markup_percent = 20
-	sim.idle_workers = 3
-	t.check(f.stance_terms(sim, "union").tax == -30 and f.stance_terms(sim, "populist").tax == -30, "Tax: 3 per point above 10%")
+	sim.idle_workers = sim.workforce() * 3 / 10
+	var idle_points: int = sim.idle_workers * 100 / sim.workforce() - 10
+	t.check(f.stance_terms(sim, "union").tax == -15 and f.stance_terms(sim, "populist").tax == -15, "Tax: 3 per point above the default 15%")
 	t.check(f.stance_terms(sim, "populist").markup == -20 and f.stance_terms(sim, "middle").markup == 10 and f.stance_terms(sim, "union").markup == -10, "Markup: per point above 10%, double for the populists")
-	t.check(f.stance_terms(sim, "union").idle_workers == -6 and f.stance_terms(sim, "industry").idle_workers == 6, "Idle workers: −2 for the unions, +2 for industry, per worker")
-	sim.tax_percent = 10
+	t.check(idle_points > 0 and f.stance_terms(sim, "union").idle_workers == -idle_points and f.stance_terms(sim, "industry").idle_workers == idle_points, "Idle workers: 1 per point of the workforce idle above 10%% (%d)" % idle_points)
+	sim.idle_workers = sim.workforce() / 10
+	t.check(f.stance_terms(sim, "union").idle_workers == 0, "Up to 10%% of the workforce idle counts nothing")
+	sim.tax_percent = 15
 	sim.markup_percent = 10
-	t.check(f.stance_terms(sim, "union").tax == 0 and f.stance_terms(sim, "middle").markup == 0, "Tax and markup at 10% count nothing")
+	t.check(f.stance_terms(sim, "union").tax == 0 and f.stance_terms(sim, "middle").markup == 0, "Tax and markup at their defaults count nothing")
 	for entry in sim.ledger:
 		entry.unpaid = Economy.WAGE * 2
 	t.check(not sim.ledger.is_empty() and f.stance_terms(sim, "union").unpaid_public_workers == -20, "Unpaid public workers: −10 per worker unpaid each payday")

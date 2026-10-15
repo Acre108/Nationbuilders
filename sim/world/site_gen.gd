@@ -66,6 +66,7 @@ static func generate(world, coord: Vector2i):
 			site.deposits[index] = "timber" if tile == "forest" else ("fertile_soil" if tile == "grass" and descriptor.biome not in ["tundra", "mountain_pass"] else "")
 	_add_ramps(site, world)
 	var water_distances := _water_distances(site)
+	_fertility(site, world, water_distances)
 	_place_deposits(site, world, owners, water_distances)
 	var spot := _find_starter(site, water_distances)
 	if spot.x < 0:
@@ -249,3 +250,21 @@ static func _connected(site, grid, founding_only: bool) -> int:
 			queue.append(other)
 	return visited.size()
 
+
+## Fertile soil (docs/SUPPLY_CHAINS.md §2) lies in loamy patches of grass,
+## richer within a few tiles of water. The biome sets how much land clears the
+## bar: heartland and riverland most, coast and hills less, marsh least.
+## Tundra and mountain passes have none. Fields work at half speed elsewhere.
+const FERTILE_BAR := {"heartland": 0.46, "riverland": 0.48, "coast": 0.56, "highland_hills": 0.56, "marsh": 0.62}
+
+static func _fertility(site, world, water_distances: PackedInt32Array) -> void:
+	for index in site.terrain.size():
+		if site.deposits[index] != "fertile_soil":
+			continue
+		var bar: float = FERTILE_BAR.get(world.hex(site.owner_coords[index]).biome, 2.0)
+		var cell := Vector2i(index % site.width, index / site.width)
+		var loam := IntNoise.fbm(world.seed_value, 613, Vector2(cell) / 9.0, 3)
+		var water: int = water_distances[index]
+		loam += 0.2 if water <= 3 else (0.1 if water <= 8 else 0.0)
+		if loam < bar:
+			site.deposits[index] = ""

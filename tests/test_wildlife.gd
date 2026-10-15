@@ -120,7 +120,7 @@ func _hunting(t) -> void:
 	var rows: Array = db.buildings.values().duplicate(true)
 	for row in rows:
 		if row.id == "hunter": row.inputs = {"water":1}
-	t.check(not db.validate(db.goods.values().duplicate(true), rows, db.tiers.values().duplicate(true)) and "hunting takes game" in "; ".join(db.errors), "Reject a hunter with recipe inputs")
+	t.check(not db.validate(db.goods.values().duplicate(true), rows, db.tiers.values().duplicate(true)) and "hunting takes from the land" in "; ".join(db.errors), "Reject a hunter with recipe inputs")
 	db.load_directory()
 
 func _snapshot(t) -> void:

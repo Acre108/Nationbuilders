@@ -23,6 +23,7 @@ extends RefCounted
 ## faction's pull within their radius, and belong to that faction.
 const Economy = preload("res://sim/economy.gd")
 const Needs = preload("res://sim/needs.gd")
+const Labour = preload("res://sim/labour.gd")
 const SETTLEMENT := "village"
 ## Event text when a faction arrives: its name and the tick.
 const FACTION_ARRIVED := "The %s arrived in the village at tick %d"
@@ -62,9 +63,14 @@ const BUYER_PLEASED := 5
 const HOUSE_SOLD := -5
 const DEMOLISHED := -15
 ## Stance rows that count only above a level (FACTIONS.md §4): tax and markup
-## above 10%, a rival's power share above 15%. Happiness counts from 50%.
-const TAX_OVER := 10
-const MARKUP_OVER := 10
+## above their defaults, idle workers above IDLE_OVER percent of the
+## workforce, a rival's power share above 15%. Happiness counts from 50%.
+const TAX_OVER := Economy.DEFAULT_TAX_PERCENT
+const MARKUP_OVER := Economy.DEFAULT_MARKUP_PERCENT
+const IDLE_OVER := 10
+## The levels the tax_cap and markup_cap pledges hold the levers at.
+const TAX_CAP := 10
+const MARKUP_CAP := 10
 const POWER_OVER := 15
 const HAPPINESS_MID := 50
 ## Houses sold to landlords count against the unions for this many paydays.
@@ -95,7 +101,7 @@ const ORGANISE_TILES := 8
 const OFFER_TYPES := ["bid", "pledge", "organise"]
 ## The pledges a village can hold, with the text for the panel and errors.
 ## A pledge locks its lever while it runs: tax_cap and markup_cap hold the
-## lever at TAX_OVER and MARKUP_OVER or below, markup_floor at its level or
+## lever at TAX_CAP and MARKUP_CAP or below, markup_floor at its level or
 ## above; no_house_sales stops house sales; no_workplace_stopped stops the
 ## player stopping workers. woodland_kept cannot be locked, so it breaks at a
 ## payday that finds fewer trees than its level.
@@ -164,28 +170,34 @@ func found(sim) -> void:
 		_arrive(sim, id)
 
 ## Runs every tick. Recruiting factions arrive once a house reaches a tier of
-## their class; they arrive in data order, so the result is deterministic. A
-## house whose tier changed class (a Villager house back to Settlers) leaves its
-## faction at once, and its streak ends.
+## their class, and others with the first house that belongs to them; they
+## arrive in data order, so the result is deterministic. A house whose class
+## changed (a Villager house back to Settlers) leaves its faction at once, and
+## its streak ends. A house whose type names its faction (class_faction)
+## belongs to it as soon as that faction is here.
 func update(sim) -> void:
-	for id in sim.db.factions:
-		var row: Dictionary = sim.db.factions[id]
-		if coffers.has(id) or not bool(row.recruits) or not in_villages(row):
-			continue
-		for building in sim.buildings.values():
-			if building.definition.kind == "house" and sim.db.tiers[building.tier].get("class", "") == row["class"]:
-				_arrive(sim, id)
-				break
+	for id in _due(sim):
+		_arrive(sim, id)
 	for house in sim.buildings.values():
 		if house.definition.kind != "house" or (house.aligned.is_empty() and house.pull_leader.is_empty()):
 			continue
-		var house_class: String = sim.db.tiers[house.tier]["class"]
+		var house_class: String = Labour.house_class(sim, house)
 		if not house.aligned.is_empty() and sim.db.factions[house.aligned]["class"] != house_class:
 			sim.events.append(HOUSE_LAPSED % [sim.db.factions[house.aligned].name, sim.db.tiers[house.tier].name, sim.tick])
 			house.aligned = ""
 			_end_streak(house)
 		if not house.pull_leader.is_empty() and sim.db.factions[house.pull_leader]["class"] != house_class:
 			_end_streak(house)
+	# A house whose type names its faction belongs to it, once that faction is
+	# here: a middle-class house to the middle class.
+	for house in sim.buildings.values():
+		if house.definition.kind != "house":
+			continue
+		var own := class_faction(sim, house)
+		if not own.is_empty() and present(own) and house.aligned != own:
+			house.aligned = own
+			_end_streak(house)
+			sim.events.append(HOUSE_JOINED % [sim.db.factions[own].name, sim.tick])
 
 ## Called from the economy's payday, after households are paid and taxed. Each
 ## aligned house pays dues on the wage it just received, then each rented house
@@ -353,7 +365,46 @@ func _shop(sim, id: String):
 		best = stores[0]
 	return best
 
-func _arrive(sim, id: String) -> void:
+## Settles a migrated save: the recruiting factions its houses would already
+## have brought arrive at once and silently, since they came before the save
+## could record them.
+func arrive_quietly(sim) -> void:
+	for id in _due(sim):
+		_arrive(sim, id, false)
+
+## The faction a house belongs to by its type, with no contest: its row's
+## `faction`, else the one village faction of its class that does not recruit.
+## "" for a working-class or unclassed house, whose faction is won (§3.1), and
+## when two such factions share its class (the elite) and its row names none.
+func class_faction(sim, house) -> String:
+	if house.definition.has("faction"):
+		return str(house.definition.faction)
+	var house_class: String = Labour.house_class(sim, house)
+	var found := ""
+	for id in sim.db.factions:
+		var row: Dictionary = sim.db.factions[id]
+		if row["class"] == house_class and not bool(row.recruits) and in_villages(row):
+			if not found.is_empty():
+				return ""
+			found = id
+	return found
+
+## Absent factions, in data order, that a house brings: a recruiting faction
+## comes with the first house of its class, any other with the first house
+## that belongs to it (class_faction).
+func _due(sim) -> Array:
+	var result: Array = []
+	for id in sim.db.factions:
+		var row: Dictionary = sim.db.factions[id]
+		if coffers.has(id) or not in_villages(row):
+			continue
+		for building in sim.buildings.values():
+			if building.definition.kind == "house" and (Labour.house_class(sim, building) == row["class"] if bool(row.recruits) else class_faction(sim, building) == id):
+				result.append(id)
+				break
+	return result
+
+func _arrive(sim, id: String, announce: bool = true) -> void:
 	var row: Dictionary = sim.db.factions.get(id, {})
 	if row.is_empty() or coffers.has(id) or not in_villages(row):
 		return
@@ -368,10 +419,11 @@ func _arrive(sim, id: String) -> void:
 	sales[id] = []
 	trees[id] = sim.grid.trees.size()
 	sim.outside_money += endowment
-	var event: String = FACTION_ARRIVED % [row.name, sim.tick]
-	if endowment > 0:
-		event += ", bringing " + Economy.format(endowment)
-	sim.events.append(event)
+	if announce:
+		var event: String = FACTION_ARRIVED % [row.name, sim.tick]
+		if endowment > 0:
+			event += ", bringing " + Economy.format(endowment)
+		sim.events.append(event)
 	# Halls built for the faction before it came pass to it now.
 	for building in sim.buildings.values():
 		if building.definition.kind == "hall" and building.definition.recruits_for == id:
@@ -394,7 +446,7 @@ func _contest(sim, relieved: Dictionary) -> void:
 		var house = sim.buildings[uid]
 		if house.definition.kind != "house":
 			continue
-		var house_class: String = sim.db.tiers[house.tier]["class"]
+		var house_class: String = Labour.house_class(sim, house)
 		var pulls := {}
 		for id in sim.db.factions:
 			if present(id) and bool(sim.db.factions[id].recruits) and not house_class.is_empty() and sim.db.factions[id]["class"] == house_class:
@@ -449,7 +501,7 @@ func _decide(sim, house, pulls: Dictionary) -> void:
 func contest_state_valid(sim, building) -> bool:
 	if building.definition.kind != "house":
 		return building.aligned.is_empty() and building.pull_leader.is_empty()
-	var house_class: String = sim.db.tiers[building.tier]["class"]
+	var house_class: String = Labour.house_class(sim, building)
 	for id in [building.aligned, building.pull_leader]:
 		if not id.is_empty() and sim.db.factions[id]["class"] != house_class:
 			return false
@@ -595,7 +647,7 @@ static func band(share: int) -> int:
 ## the favour target (FACTIONS.md §4): the row's weight × the measure below,
 ## rounded. Strikes and riots do not happen in villages, so that term is 0.
 ## - tax, markup: points above TAX_OVER and MARKUP_OVER.
-## - idle_workers: idle workers now.
+## - idle_workers: points of the workforce idle above IDLE_OVER percent.
 ## - unpaid_public_workers: public workers unpaid per payday over the ledger.
 ## - rent: average rent per house per payday, Crown houses paying none.
 ## - houses_sold: houses sold to landlords in the last SALES_PAYDAYS.
@@ -616,7 +668,7 @@ func stance_terms(sim, id: String) -> Dictionary:
 			"markup":
 				measure = maxi(0, sim.markup_percent - MARKUP_OVER)
 			"idle_workers":
-				measure = sim.idle_workers
+				measure = maxi(0, sim.idle_workers * 100 / maxi(1, sim.workforce()) - IDLE_OVER)
 			"unpaid_public_workers":
 				var unpaid := 0
 				for entry in sim.ledger:
@@ -720,9 +772,9 @@ func forbids(sim, lever: String, value: int = 0) -> String:
 			var locked := false
 			match pledge.type:
 				"tax_cap":
-					locked = lever == "tax" and value > TAX_OVER
+					locked = lever == "tax" and value > TAX_CAP
 				"markup_cap":
-					locked = lever == "markup" and value > MARKUP_OVER
+					locked = lever == "markup" and value > MARKUP_CAP
 				"markup_floor":
 					locked = lever == "markup" and value < int(pledge.level)
 				"no_house_sales":
@@ -814,7 +866,7 @@ func offer_possible(sim, id: String, offer: Dictionary) -> bool:
 			var house = sim.buildings.get(int(offer.uid))
 			if house == null or house.definition.kind != "house" or not house.aligned.is_empty():
 				return false
-			if sim.db.tiers[house.tier]["class"] != sim.db.factions[id]["class"]:
+			if Labour.house_class(sim, house) != sim.db.factions[id]["class"]:
 				return false
 			for hall in sim.buildings.values():
 				if hall.definition.kind == "hall" and hall.definition.recruits_for == id and gap(hall, house) <= ORGANISE_TILES:
@@ -882,9 +934,9 @@ func accept(sim, id: String) -> bool:
 			return false
 		"pledge":
 			var silver := mini(int(offer.silver), int(coffers[id]))
-			if offer.pledge == "tax_cap" and sim.tax_percent > TAX_OVER and not sim.set_tax_percent(TAX_OVER):
+			if offer.pledge == "tax_cap" and sim.tax_percent > TAX_CAP and not sim.set_tax_percent(TAX_CAP):
 				return false
-			if offer.pledge == "markup_cap" and sim.markup_percent > MARKUP_OVER and not sim.set_markup_percent(MARKUP_OVER):
+			if offer.pledge == "markup_cap" and sim.markup_percent > MARKUP_CAP and not sim.set_markup_percent(MARKUP_CAP):
 				return false
 			if offer.pledge == "no_workplace_stopped":
 				for building in sim.buildings.values():

@@ -141,7 +141,9 @@ func _free_cell(sim, building_id: String, rotation: int = 0) -> Vector2i:
 func _snapshot_restore(t) -> void:
 	var sim = Sim.new(73)
 	t.check(Scenario.starter(sim), "Snapshot fixture uses real founding commands")
-	sim.step(240)
+	# Step to the first promotion, which unlocks the chain.
+	while sim.unlocked_tier < 2 and sim.tick < 3000:
+		sim.step(1)
 	t.check(Scenario.complete_chain(sim), "Snapshot fixture includes complete chain")
 	sim.step(173)
 	var house = sim.buildings.values()[1]
@@ -203,6 +205,9 @@ func _legacy_restore(t) -> void:
 	# neutral, while the live one has drifted since its first payday.
 	for id in sim.factions.favour:
 		sim.factions.favour[id] = 0
+	# Nor game or wild berries: migration settles both from the land as saved.
+	sim.wildlife.setup(sim.grid)
+	sim.forage.setup(sim.grid)
 	var sim_state := Campaign._state(sim)
 	for key in ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger"]:
 		sim_state.erase(key)

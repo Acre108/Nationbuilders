@@ -9,9 +9,11 @@ const Storage = preload("res://sim/storage.gd")
 const SeededRNG = preload("res://sim/rng.gd")
 const Needs = preload("res://sim/needs.gd")
 const Forestry = preload("res://sim/forestry.gd")
+const Labour = preload("res://sim/labour.gd")
 const Economy = preload("res://sim/economy.gd")
 const Factions = preload("res://sim/factions.gd")
 const Wildlife = preload("res://sim/wildlife.gd")
+const Forage = preload("res://sim/forage.gd")
 const TICKS_PER_SECOND := 10
 const CARRIER_STEP_TICKS := 2
 ## Carriers keep each house pantry stocked for this many consumption cycles.
@@ -28,9 +30,13 @@ var economy = Economy.new()
 var factions = Factions.new()
 ## Deer and boar in the land around the village; see wildlife.gd.
 var wildlife = Wildlife.new()
+## Wild berry bushes in the woods; see forage.gd.
+var forage = Forage.new()
 var buildings: Dictionary = {}
 var carriers: Array = []
-var reserve = Storage.new(300)
+## Founding supplies, kept outside any storehouse until the first is built.
+const RESERVE_CAPACITY := 400
+var reserve = Storage.new(RESERVE_CAPACITY)
 var tick := 0
 var unlocked_tier := 1
 var idle_workers := 0
@@ -63,6 +69,9 @@ var next_carrier_uid := 1
 var produced: Dictionary = {}
 var consumed: Dictionary = {}
 var destroyed: Dictionary = {}
+## Goods households have eaten, for the food balance (food_report.gd). A
+## derived running total: not saved, so it restarts with a loaded village.
+var _eaten: Dictionary = {}
 var events: Array[String] = []
 var last_error := ""
 var valid := false
@@ -92,6 +101,7 @@ func _init(seed_value: int = 73, content = null, site_package = null) -> void:
 		site = SitePackage.new()
 	grid = Grid.new(site)
 	wildlife.setup(grid)
+	forage.setup(grid)
 	reserve.add("logs", 100)
 	reserve.add("berries", 36)
 	if valid:
@@ -104,8 +114,10 @@ func placement_error(building_id: String, cell: Vector2i, rotation_quarters: int
 	if not db.buildings.has(building_id):
 		return "Unknown building id: " + building_id
 	var row: Dictionary = db.buildings[building_id]
+	if row.get("reserved", false):
+		return "%s cannot be built yet" % row.name
 	if int(row.unlock_tier) > unlocked_tier:
-		return "Requires %s (satisfy a homestead)" % db.tiers[int(row.unlock_tier)].name
+		return "Requires %s (satisfy a cottage)" % db.tiers[int(row.unlock_tier)].name
 	var base_level: int = grid.level_at(cell)
 	var footprint := Building.rotated_footprint(row, rotation_quarters)
 	for y in footprint.y:
@@ -135,6 +147,19 @@ func placement_error(building_id: String, cell: Vector2i, rotation_quarters: int
 		return _treasury_shortfall(price_due)
 	return ""
 
+## A house's class (docs/PLAN-job-classes.md): its row's `class` if present,
+## else its tier's. Computed here, not in labour.gd, which calls this.
+func house_class(house) -> String:
+	return str(house.definition.get("class", db.tiers[house.tier].get("class", "")))
+
+## The adults and children of a house's family, drawn once per house from its
+## row's "family" ranges (labour.gd). At an inn every adult is a lodger.
+func family_adults(house) -> int:
+	return Labour.family_adults(self, house)
+
+func family_children(house) -> int:
+	return Labour.family_children(self, house)
+
 ## Whether a footprint at this cell shares an edge with one of these terrains,
 ## as a fisher's hut must with water.
 func touches_terrain(cell: Vector2i, footprint: Vector2i, terrains: Array) -> bool:
@@ -146,6 +171,30 @@ func touches_terrain(cell: Vector2i, footprint: Vector2i, terrains: Array) -> bo
 			if inside_x != inside_y and grid.terrain_at(cell + Vector2i(x, y)) in terrains:
 				return true
 	return false
+
+## Percent of full speed a building of this row would work at here. A field
+## (`deposit` with `off_deposit_percent`) works at full speed with its whole
+## footprint on its deposit, such as fertile soil, and at off_deposit_percent
+## with none of it, in proportion between. Other buildings always work at 100.
+func deposit_speed(row: Dictionary, cell: Vector2i, rotation_quarters: int = 0) -> int:
+	if not row.has("off_deposit_percent"):
+		return 100
+	var footprint := Building.rotated_footprint(row, rotation_quarters)
+	var on := 0
+	for y in footprint.y:
+		for x in footprint.x:
+			var tile := cell + Vector2i(x, y)
+			if grid.inside(tile) and grid.deposits[tile.y * grid.width + tile.x] == row.deposit:
+				on += 1
+	var off := int(row.off_deposit_percent)
+	return off + (100 - off) * on / maxi(1, footprint.x * footprint.y)
+
+## Ticks a building's cycle takes, longer for a field off fertile soil.
+func cycle_ticks(building) -> int:
+	var row: Dictionary = building.definition
+	if not row.has("off_deposit_percent"):
+		return int(row.cycle_ticks)
+	return ceili(float(row.cycle_ticks) * 100.0 / float(deposit_speed(row, building.cell, building.rotation_quarters)))
 
 ## Construction cannot use the public pay reserve, so say when that is why.
 func _treasury_shortfall(price_due: int) -> String:
@@ -161,7 +210,13 @@ func place(building_id: String, cell: Vector2i, rotation_quarters: int = 0) -> b
 	var capital: int = economy.capital(self, row)
 	_pay(row.cost)
 	var building = Building.new(next_uid, row, cell, rotation_quarters)
-	# The treasury gives the new building its working money.
+	# A Master's house or an inn lives at one tier and never changes it.
+	if row.has("fixed_tier"):
+		building.tier = int(row.fixed_tier)
+	# The treasury gives the new building its working money: a house the purse
+	# its family's adults earn it, now that its family is drawn.
+	if row.kind == "house":
+		capital = Economy.house_grant(self, building)
 	building.silver = capital
 	Economy.spend_on_construction(self, capital)
 	# A union hall or alehouse belongs to its faction from the start, or passes
@@ -350,6 +405,7 @@ func step(ticks: int = 1) -> void:
 		_jobs_changed()
 		grid.grow_trees(tick)
 		wildlife.update(self)
+		forage.update(self)
 		# Low village morale slows every workplace: at speed s%, workplaces
 		# advance on s of every 100 ticks, spread evenly.
 		var speed: int = Needs.work_speed(Needs.morale(self))
@@ -370,39 +426,10 @@ func step(ticks: int = 1) -> void:
 		if tick % PAYDAY_TICKS == 0:
 			economy.payday(self)
 
-## Staffs workplaces and carriers by priority: high, then normal, then low.
-## Within a level, buildings take their whole crews in placement order, then
-## that level's storehouses put carriers on shift (carriers are jobs too), up
-## to their carrier count. Carriers already on a trip count first so they can
-## finish it; the rest of a crew goes to idle carriers in order. Off-shift
-## carriers wait at home. Returns the workers still idle.
-func _staff(workers: int) -> int:
-	var shifts: Dictionary = {}
-	for level in [Building.HIGH, Building.NORMAL, Building.LOW]:
-		for building in buildings.values():
-			# Halls have no jobs, so they are never staffed.
-			if building.priority != level or building.definition.kind in ["storehouse", "hall"]:
-				continue
-			var required := int(building.definition.workers)
-			building.staffed = building.workers_enabled and required <= workers
-			if building.staffed:
-				workers -= required
-		for building in buildings.values():
-			if building.priority != level or building.definition.kind != "storehouse":
-				continue
-			building.staffed = building.workers_enabled
-			building.crew = mini(int(building.definition.carriers), workers) if building.workers_enabled else 0
-			workers -= building.crew
-			shifts[building.uid] = building.crew
-	for busy in [true, false]:
-		for carrier in carriers:
-			if (carrier.stage != "idle") != busy:
-				continue
-			var left: int = shifts.get(carrier.owner, 0)
-			carrier._on_shift = left > 0
-			if left > 0:
-				shifts[carrier.owner] = left - 1
-	return workers
+## Staffs workplaces and carriers from the families, by job class and
+## priority (labour.gd). Returns the workers still idle.
+func _staff(_workers: int) -> int:
+	return Labour.staff(self)
 
 ## Sets the share of household wages taken into the treasury at payday.
 func set_tax_percent(percent: int) -> bool:
@@ -489,6 +516,9 @@ func input_buffer(row: Dictionary, good: String) -> int:
 
 func _produce(building) -> void:
 	var row: Dictionary = building.definition
+	if row.get("gathers", false):
+		Forage.gather(self,building)
+		return
 	if row.get("hunts", false):
 		Wildlife.hunt(self,building)
 		return
@@ -511,7 +541,7 @@ func _produce(building) -> void:
 			consumed[good] = int(consumed.get(good, 0)) + int(row.inputs[good])
 	building.status = "working"
 	building.progress += 1
-	if building.progress >= int(row.cycle_ticks):
+	if building.progress >= cycle_ticks(building):
 		for good in row.outputs:
 			building.output.add(good, int(row.outputs[good]))
 			produced[good] = int(produced.get(good, 0)) + int(row.outputs[good])
@@ -810,12 +840,9 @@ func served_houses(building) -> int:
 				count += 1
 	return count
 
+## Every working adult: the founders, and each house's family (labour.gd).
 func workforce() -> int:
-	var result := 4 # Founding adults; additional workers are counted per house.
-	for building in buildings.values():
-		if building.definition.kind == "house":
-			result += int(db.tiers[building.tier].workers_per_house)
-	return result
+	return Labour.workforce(self)
 
 func stock(good: String) -> int:
 	var total: int = reserve.count(good)
@@ -848,7 +875,7 @@ func snapshot() -> Dictionary:
 		carrier_states.append(carrier.snapshot())
 	for cell in grid.roads:
 		road_cells.append([cell.x, cell.y])
-	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"public_reserve":public_reserve,"capital_reserve":capital_reserve,"payroll":payroll,"outside_money":outside_money,"factions":factions.snapshot(),"tax_percent":tax_percent,"markup_percent":markup_percent,"keep_service_reserve":keep_service_reserve,"taxes_collected":taxes_collected,"public_frustration":public_frustration,"period":period.duplicate(),"ledger":ledger.duplicate(true),"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"wildlife":wildlife.snapshot(),"site":_site_snapshot()}
+	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"public_reserve":public_reserve,"capital_reserve":capital_reserve,"payroll":payroll,"outside_money":outside_money,"factions":factions.snapshot(),"tax_percent":tax_percent,"markup_percent":markup_percent,"keep_service_reserve":keep_service_reserve,"taxes_collected":taxes_collected,"public_frustration":public_frustration,"period":period.duplicate(),"ledger":ledger.duplicate(true),"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"wildlife":wildlife.snapshot(),"forage":forage.snapshot(),"site":_site_snapshot()}
 
 func _site_snapshot() -> Dictionary:
 	var state := {}
@@ -929,7 +956,8 @@ static func from_snapshot(state: Dictionary, content = null):
 			forest[cell] = int(entry[2]) if key == "saplings" else entry[2]
 		result.grid.set(key, forest)
 	if not result.wildlife.restore(state.wildlife): return null
-	result.reserve = Storage.from_snapshot(state.reserve, 300)
+	if not result.forage.restore(state.forage, result.grid): return null
+	result.reserve = Storage.from_snapshot(state.reserve, RESERVE_CAPACITY)
 	if result.reserve == null: return null
 	for good in result.reserve.items:
 		if not result.db.goods.has(good): return null

@@ -21,7 +21,7 @@ func update(sim, house) -> void:
 			if house.happiness_history.size() > Building.HAPPINESS_CYCLES:
 				house.happiness_history.pop_front()
 		house.needs_met = {}
-		house.needs_next_tick = sim.tick + int(row.consume_every_ticks)
+		house.needs_next_tick = sim.tick + consume_ticks(sim, house)
 	# A need names a good or a goods category; the pantry's first good that
 	# meets it, in goods.json order, is eaten.
 	for need in consumption:
@@ -32,6 +32,7 @@ func update(sim, house) -> void:
 			if house.input.take(good, amount):
 				house.needs_met[need] = true
 				sim.consumed[good] = int(sim.consumed.get(good, 0)) + amount
+				sim._eaten[good] = int(sim._eaten.get(good, 0)) + amount
 				break
 	# A service need (a chapel) is met while a staffed provider is in range.
 	var services := counted_services(row)
@@ -39,7 +40,8 @@ func update(sim, house) -> void:
 		if not house.needs_met.has(service) and sim.serves(house, service):
 			house.needs_met[service] = true
 	var total := consumption.size() + services.size()
-	house.happiness = 100 * house.needs_met.size() / maxi(1, total)
+	# An inn nearby lifts happiness on top of the share of needs met.
+	house.happiness = mini(100, 100 * house.needs_met.size() / maxi(1, total) + comfort(sim, house))
 	house.needs_ok = house.needs_met.size() == total
 	house.missing_need = ""
 	if not house.needs_ok:
@@ -53,10 +55,10 @@ func update(sim, house) -> void:
 	if house.needs_ok:
 		house.satisfied_ticks += 1
 		house.status = "needs satisfied"
-		if sim.db.tiers.has(house.tier + 1) and house.satisfied_ticks >= int(row.upgrade_after_ticks):
+		if not house.definition.has("fixed_tier") and sim.db.tiers.has(house.tier + 1) and house.satisfied_ticks >= int(row.upgrade_after_ticks):
 			_change_tier(sim, house, house.tier + 1)
 			sim.unlocked_tier = maxi(sim.unlocked_tier, house.tier)
-			sim.events.append("A homestead became %s at tick %d" % [sim.db.tiers[house.tier].name, sim.tick])
+			sim.events.append("A %s became %s at tick %d" % [str(house.definition.name).to_lower(), sim.db.tiers[house.tier].name, sim.tick])
 			return
 	else:
 		house.satisfied_ticks = 0
@@ -70,11 +72,39 @@ func update(sim, house) -> void:
 	# happiness stays below the tier's threshold for the downgrade time.
 	if unhappy(sim, house):
 		house.unsatisfied_ticks += 1
-		if house.tier > 1 and house.unsatisfied_ticks >= int(row.downgrade_after_ticks):
+		if house.tier > 1 and not house.definition.has("fixed_tier") and house.unsatisfied_ticks >= int(row.downgrade_after_ticks):
 			_change_tier(sim, house, house.tier - 1)
-			sim.events.append("A homestead returned to %s at tick %d" % [sim.db.tiers[house.tier].name, sim.tick])
+			sim.events.append("A %s returned to %s at tick %d" % [str(house.definition.name).to_lower(), sim.db.tiers[house.tier].name, sim.tick])
 	else:
 		house.unsatisfied_ticks = 0
+
+## Mouths a tier's consumption interval is set for. A family eats one basket
+## every interval × REFERENCE_MOUTHS / mouths, counting each adult as one
+## mouth and each child as half (decided 15 Oct 2026; six mouths to the basket
+## after a family-scale test village could not feed itself at four). A couple
+## eats at a third of the tier's rate, a single adult at a sixth, and a couple
+## with two children at half. Children add mouths without wages.
+const REFERENCE_MOUTHS := 6
+
+## Ticks between a house's baskets. Halves avoid fractions: 2 per adult, 1 per child.
+static func consume_ticks(sim, house) -> int:
+	var row: Dictionary = sim.db.tiers[house.tier]
+	var halves: int = 2 * maxi(1, sim.family_adults(house)) + sim.family_children(house)
+	return maxi(1, int(row.consume_every_ticks) * REFERENCE_MOUTHS * 2 / halves)
+
+## Happiness an inn gives a house within its comfort radius by road, while the
+## inn is open (it has road access). The largest bonus in reach counts; bonuses
+## do not stack.
+static func comfort(sim, house) -> int:
+	var best := 0
+	for building in sim.buildings.values():
+		var lift: Variant = building.definition.get("comfort")
+		if not lift is Dictionary or int(lift.happiness) <= best or sim.grid.access(building).is_empty():
+			continue
+		var cells: int = 0 if building == house else sim.grid.distance(building, house)
+		if cells >= 0 and cells <= int(lift.radius):
+			best = int(lift.happiness)
+	return best
 
 ## Services a tier needs, other than shelter, which every house has.
 static func counted_services(tier: Dictionary) -> Array:

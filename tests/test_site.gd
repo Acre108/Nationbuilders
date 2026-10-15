@@ -34,7 +34,8 @@ func _legacy(t) -> void:
 			break
 	t.check(edge.x >= 0, "Final map row has a buildable edge fixture")
 	if edge.x >= 0:
-		t.check(not sim.place("house", edge) and sim.last_error == "Outside the map", "Footprints cannot extend past the new map edge")
+		# A 2×2 woodcutter on the last row reaches past the map; a cottage (2×1) fits.
+		t.check(not sim.place("woodcutter", edge) and sim.last_error == "Outside the map", "Footprints cannot extend past the new map edge")
 		t.check(sim.place("well", edge), "Build on the final map row")
 	# Retain an explicit reference-size option for archived captures and fixtures.
 	var legacy = Sites.first_bread(SeededRNG.new(73), Vector2i(40,40))
