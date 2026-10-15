@@ -11,6 +11,7 @@ const Needs = preload("res://sim/needs.gd")
 const Forestry = preload("res://sim/forestry.gd")
 const Economy = preload("res://sim/economy.gd")
 const Factions = preload("res://sim/factions.gd")
+const Wildlife = preload("res://sim/wildlife.gd")
 const TICKS_PER_SECOND := 10
 const CARRIER_STEP_TICKS := 2
 ## Carriers keep each house pantry stocked for this many consumption cycles.
@@ -25,6 +26,8 @@ var needs = Needs.new()
 var economy = Economy.new()
 ## The factions present and their coffers; see factions.gd.
 var factions = Factions.new()
+## Deer and boar in the land around the village; see wildlife.gd.
+var wildlife = Wildlife.new()
 var buildings: Dictionary = {}
 var carriers: Array = []
 var reserve = Storage.new(300)
@@ -88,6 +91,7 @@ func _init(seed_value: int = 73, content = null, site_package = null) -> void:
 		valid = false
 		site = SitePackage.new()
 	grid = Grid.new(site)
+	wildlife.setup(grid)
 	reserve.add("logs", 100)
 	reserve.add("berries", 36)
 	if valid:
@@ -121,6 +125,8 @@ func placement_error(building_id: String, cell: Vector2i, rotation_quarters: int
 					return "Cannot build on a slope"
 				if grid.level_at(tile) != base_level:
 					return "Ground is not level"
+	if row.has("adjacent_terrain") and not touches_terrain(cell, footprint, row.adjacent_terrain):
+		return "Must touch water" if row.adjacent_terrain.all(func(t): return t in ContentDB.WATER_TERRAINS) else "Must touch " + " or ".join(row.adjacent_terrain)
 	for good in row.cost:
 		if stock(good) < int(row.cost[good]):
 			return "Need %d %s" % [int(row.cost[good]), good]
@@ -128,6 +134,18 @@ func placement_error(building_id: String, cell: Vector2i, rotation_quarters: int
 	if Economy.construction_funds(self) < price_due:
 		return _treasury_shortfall(price_due)
 	return ""
+
+## Whether a footprint at this cell shares an edge with one of these terrains,
+## as a fisher's hut must with water.
+func touches_terrain(cell: Vector2i, footprint: Vector2i, terrains: Array) -> bool:
+	for y in range(-1, footprint.y + 1):
+		for x in range(-1, footprint.x + 1):
+			var inside_x := x >= 0 and x < footprint.x
+			var inside_y := y >= 0 and y < footprint.y
+			# Edge neighbours only: exactly one coordinate lies outside the footprint.
+			if inside_x != inside_y and grid.terrain_at(cell + Vector2i(x, y)) in terrains:
+				return true
+	return false
 
 ## Construction cannot use the public pay reserve, so say when that is why.
 func _treasury_shortfall(price_due: int) -> String:
@@ -156,6 +174,8 @@ func place(building_id: String, cell: Vector2i, rotation_quarters: int = 0) -> b
 		grid.occupied[tile] = building.uid
 		grid.clear_tree(tile)
 	grid.changed()
+	if row.kind == "hall":
+		factions.hall_placed(self, building)
 	if row.kind == "storehouse":
 		for good in reserve.items.keys():
 			var amount := mini(reserve.count(good), building.inventory.capacity - building.inventory.total())
@@ -234,6 +254,7 @@ func demolish(cell: Vector2i) -> bool:
 		factions.credit(building.owner, building.silver, "")
 	else:
 		Economy.refund(self, building.silver)
+	factions.lost_building(building)
 	for tile in building.cells():
 		grid.occupied.erase(tile)
 	buildings.erase(building.uid)
@@ -256,6 +277,10 @@ func set_workers_enabled(uid: int, enabled: bool) -> bool:
 	if int(building.definition.workers) == 0:
 		last_error = "%s has no workers" % building.definition.name
 		return false
+	if not enabled:
+		last_error = factions.forbids(self, "stop_workplace")
+		if not last_error.is_empty():
+			return false
 	building.workers_enabled = enabled
 	return true
 
@@ -284,6 +309,10 @@ func sell_building(uid: int, faction: String) -> bool:
 	if faction not in row.get("buyers", []):
 		last_error = "The %s do not buy a %s" % [buyer, row.name]
 		return false
+	if row.kind == "house":
+		last_error = factions.forbids(self, "house_sale")
+		if not last_error.is_empty():
+			return false
 	var price_due: int = factions.sale_price(self, building, faction)
 	if int(factions.coffers[faction]) < price_due:
 		last_error = "The %s cannot pay %s" % [buyer, Economy.format(price_due)]
@@ -294,7 +323,22 @@ func sell_building(uid: int, faction: String) -> bool:
 	building.owner = faction
 	building.owner_work = 0
 	events.append(Factions.BUILDING_SOLD % [buyer, row.name, Economy.format(price_due), tick])
+	factions.sold(self, building, faction)
 	return true
+
+## Accepts, declines or breaks a faction's deal; see factions.gd. An offer's
+## id is the faction's id, and a pledge's is "<faction>:<type>".
+func accept_offer(faction: String) -> bool:
+	last_error = ""
+	return factions.accept(self, faction)
+
+func decline_offer(faction: String) -> bool:
+	last_error = ""
+	return factions.decline(self, faction)
+
+func break_pledge(pledge: String) -> bool:
+	last_error = ""
+	return factions.break_pledge(self, pledge)
 
 func step(ticks: int = 1) -> void:
 	if not valid:
@@ -305,6 +349,7 @@ func step(ticks: int = 1) -> void:
 		# Rebuild derived reservations once per tick, in case a caller edited carriers.
 		_jobs_changed()
 		grid.grow_trees(tick)
+		wildlife.update(self)
 		# Low village morale slows every workplace: at speed s%, workplaces
 		# advance on s of every 100 ticks, spread evenly.
 		var speed: int = Needs.work_speed(Needs.morale(self))
@@ -365,6 +410,9 @@ func set_tax_percent(percent: int) -> bool:
 	if percent < 0 or percent > Economy.MAX_TAX_PERCENT:
 		last_error = "Tax must be between 0 and %d percent" % Economy.MAX_TAX_PERCENT
 		return false
+	last_error = factions.forbids(self, "tax", percent)
+	if not last_error.is_empty():
+		return false
 	tax_percent = percent
 	return true
 
@@ -397,6 +445,9 @@ func set_markup_percent(percent: int) -> bool:
 	last_error = ""
 	if percent < 0 or percent > Economy.MAX_MARKUP_PERCENT:
 		last_error = "Markup must be between 0 and %d percent" % Economy.MAX_MARKUP_PERCENT
+		return false
+	last_error = factions.forbids(self, "markup", percent)
+	if not last_error.is_empty():
 		return false
 	markup_percent = percent
 	return true
@@ -438,6 +489,9 @@ func input_buffer(row: Dictionary, good: String) -> int:
 
 func _produce(building) -> void:
 	var row: Dictionary = building.definition
+	if row.get("hunts", false):
+		Wildlife.hunt(self,building)
+		return
 	if row.has("forest_action"):
 		Forestry.work(self,building)
 		return
@@ -553,9 +607,9 @@ func _find_job(carrier, home) -> Dictionary:
 	for target in ordered:
 		if target.definition.kind != "house" or grid.distance(home, target) < 0:
 			continue
-		for good in db.tiers[target.tier].consumption:
-			if _wants(target, good, _pantry_target(target, good)):
-				var job := _closest_supply_job(carrier, ordered, target, good)
+		for need in db.tiers[target.tier].consumption:
+			if _pantry_wants(target, need):
+				var job := _closest_supply_job(carrier, ordered, target, db.need_goods(need))
 				if not job.is_empty():
 					return job
 	for target in ordered:
@@ -563,14 +617,14 @@ func _find_job(carrier, home) -> Dictionary:
 			continue
 		for good in target.definition.inputs:
 			if _wants(target, good, input_buffer(target.definition, good)):
-				var job := _closest_supply_job(carrier, ordered, target, good)
+				var job := _closest_supply_job(carrier, ordered, target, [good])
 				if not job.is_empty():
 					return job
 	for source in ordered:
 		# Pantry goods the house's tier no longer eats go back to storage.
 		if source.definition.kind == "house":
 			for good in source.input.items:
-				if not db.tiers[source.tier].consumption.has(good):
+				if db.need_for(source.tier, good).is_empty():
 					var job := _try_job(carrier, source, "input", home, "inventory", good)
 					if not job.is_empty():
 						return job
@@ -609,14 +663,27 @@ func _wants(target, good: String, limit: int) -> bool:
 		return false
 	return target.input.total() + _reserved(target.uid, "input", "", false) < target.input.capacity
 
-func _pantry_target(house, good: String) -> int:
+## Units of a need the pantry keeps: two cycles, capped at an equal share of
+## the pantry. A category need (staple, fuel) counts all its goods together.
+func _pantry_target(house, need: String) -> int:
 	var consumption: Dictionary = db.tiers[house.tier].consumption
-	var amount := int(consumption[good])
+	var amount := int(consumption[need])
 	return maxi(amount, mini(amount * PANTRY_CYCLES, house.input.capacity / maxi(1, consumption.size())))
 
-## Every delivery comes from the closest supply by road: a storehouse's stock or
-## a producer's finished output. Equal distances keep the rotated order.
-func _closest_supply_job(carrier, ordered: Array, target, good: String) -> Dictionary:
+## Whether carriers should bring the house more for this need: its pantry
+## stock of every good meeting it, with deliveries on their way, is below target.
+func _pantry_wants(house, need: String) -> bool:
+	var held := 0
+	for good in db.need_goods(need):
+		held += house.input.count(good) + _reserved(house.uid, "input", good, false)
+	if held >= _pantry_target(house, need):
+		return false
+	return house.input.total() + _reserved(house.uid, "input", "", false) < house.input.capacity
+
+## Every delivery comes from the closest supply by road, of any of the wanted
+## goods: a storehouse's stock or a producer's finished output. Equal distances
+## keep the rotated order, then the goods' order.
+func _closest_supply_job(carrier, ordered: Array, target, wanted: Array) -> Dictionary:
 	var candidates: Array = []
 	# Nothing changes during a search, so the buyer's budget is read once.
 	var budget: int = spendable(target)
@@ -626,16 +693,21 @@ func _closest_supply_job(carrier, ordered: Array, target, good: String) -> Dicti
 			slot = "inventory"
 		elif source.definition.kind == "producer":
 			slot = "output"
-		if slot.is_empty() or source == target or _slot(source, slot).count(good) - _reserved(source.uid, slot, good, true) < 1:
+		if slot.is_empty() or source == target:
 			continue
-		if budget < sale_price(target, source, good):
-			continue
-		var cells: int = grid.distance(source, target)
-		if cells > 0:
-			candidates.append([cells, candidates.size(), source, slot])
+		var cells := -2
+		for good in wanted:
+			if _slot(source, slot).count(good) - _reserved(source.uid, slot, good, true) < 1:
+				continue
+			if budget < sale_price(target, source, good):
+				continue
+			if cells == -2:
+				cells = grid.distance(source, target)
+			if cells > 0:
+				candidates.append([cells, candidates.size(), source, slot, good])
 	candidates.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 	for entry in candidates:
-		var job := _try_job(carrier, entry[2], entry[3], target, "input", good)
+		var job := _try_job(carrier, entry[2], entry[3], target, "input", entry[4])
 		if not job.is_empty():
 			return job
 	return {}
@@ -776,7 +848,7 @@ func snapshot() -> Dictionary:
 		carrier_states.append(carrier.snapshot())
 	for cell in grid.roads:
 		road_cells.append([cell.x, cell.y])
-	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"public_reserve":public_reserve,"capital_reserve":capital_reserve,"payroll":payroll,"outside_money":outside_money,"factions":factions.snapshot(),"tax_percent":tax_percent,"markup_percent":markup_percent,"keep_service_reserve":keep_service_reserve,"taxes_collected":taxes_collected,"public_frustration":public_frustration,"period":period.duplicate(),"ledger":ledger.duplicate(true),"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"site":_site_snapshot()}
+	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"public_reserve":public_reserve,"capital_reserve":capital_reserve,"payroll":payroll,"outside_money":outside_money,"factions":factions.snapshot(),"tax_percent":tax_percent,"markup_percent":markup_percent,"keep_service_reserve":keep_service_reserve,"taxes_collected":taxes_collected,"public_frustration":public_frustration,"period":period.duplicate(),"ledger":ledger.duplicate(true),"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"wildlife":wildlife.snapshot(),"site":_site_snapshot()}
 
 func _site_snapshot() -> Dictionary:
 	var state := {}
@@ -856,6 +928,7 @@ static func from_snapshot(state: Dictionary, content = null):
 			if key != "saplings" and not entry[2] is bool: return null
 			forest[cell] = int(entry[2]) if key == "saplings" else entry[2]
 		result.grid.set(key, forest)
+	if not result.wildlife.restore(state.wildlife): return null
 	result.reserve = Storage.from_snapshot(state.reserve, 300)
 	if result.reserve == null: return null
 	for good in result.reserve.items:
@@ -883,6 +956,7 @@ static func from_snapshot(state: Dictionary, content = null):
 			if not result.grid.in_reach(cell) or result.grid.occupied.has(cell) or result.grid.roads.has(cell): return null
 			result.grid.occupied[cell] = building.uid
 		result.buildings[building.uid] = building
+	if not result.factions.references_valid(result): return null
 	var carrier_ids := {}
 	for entry in state.carriers:
 		if not entry is Dictionary: return null

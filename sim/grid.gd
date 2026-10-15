@@ -183,6 +183,11 @@ func distance(a, b) -> int:
 func reaches(cell: Vector2i, building) -> bool:
 	return in_reach(cell) and roads.has(cell) and _field(building).has(cell)
 
+## Road cells by steps from the building's frontage; distance() to a building
+## whose frontage is on that cell is the steps + 1. Read only: it is the cache.
+func road_steps(building) -> Dictionary:
+	return _field(building)
+
 ## Steps from the building's frontage to each road cell, by breadth-first
 ## search. Steps are symmetric, so this also measures routes towards it.
 func _field(building) -> Dictionary:

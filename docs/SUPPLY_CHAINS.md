@@ -2,6 +2,24 @@
 
 **Status:** design proposal. This extends [DESIGN.md](DESIGN.md) for milestone 2 onward. It does not change the milestone 1 data in `data/`. Section 9 lists the data and sim changes needed to adopt it.
 
+### Implementation status (15 Oct 2026)
+
+Built in `data/` and the sim, with tests in `tests/test_chains.gd` and Blender models from `tools/build_medieval_assets.py`:
+
+- **Goods categories.** Goods carry `categories`, and a tier's `consumption` may name a category instead of a good (§9). Any good in it meets the need. Tier 1 eats water + **B**, and Tier 2 eats water + **S** + **F** plus the chapel. Logs no longer stand in for firewood.
+- **New goods:** fish, pigs, meat, firewood, planks. The storehouse's `storage_capacity` is 330, which is `good_limit` 30 × 11 goods.
+- **New buildings:** `fisher` (C1, Tier 1; the footprint must share an edge with water through `adjacent_terrain`), `woodshed` (C4), `sawmill` (C5), and `pig_farm` + `butcher` (C3). Pig farm and butcher cost 2 planks each, so the sawmill comes first. The `hunter` (C1, Tier 1) hunts deer and boar that live in the land; see [WILDLIFE.md](WILDLIFE.md), which replaces the flat `game` pool.
+- `Scenario.complete_chain()` now also places a woodshed, so the starter village keeps its fuel.
+
+**Not yet built:**
+- The rest of C1: the forager, which `berry_bushes` stands in for.
+- Charcoal kiln, quarry and C6–C8: these need village-scale `stone_outcrop`/`surface_iron` deposits and the `deposit` rule.
+- The `off_deposit_speed` field rule, Tier 3, services that consume goods (tavern, market), and every location chain.
+
+**Balance notes from the first runs:**
+- Fish costs 3 s against bread's 16 s, so a fisher is a very cheap staple.
+- Without a forester, a woodshed and sawmill burn through founding logs. The woodshed keeps splitting logs until the storehouse holds 30 firewood.
+
 Building ids, goods ids, `cycle_ticks`, `workers`, `unlock_tier` and `cost` use the same names and meanings as `data/buildings.json`. 10 ticks = 1 second. All numbers are first-pass balance values to be tuned by the headless harness.
 
 ---

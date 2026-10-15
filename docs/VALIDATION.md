@@ -21,6 +21,23 @@ Every Milestone 1 work item is done except the manual playtest
   (`godot --path . res://view/village_view.tscn -- --render-smoke`): the
   starter plus mill and bakery, 80 simulated seconds, with 8 bread produced.
 
+### Supply chains, batch 1 (15 October 2026)
+
+The first buildings from [SUPPLY_CHAINS.md](SUPPLY_CHAINS.md) are in:
+- the fisher, woodshed, sawmill, pig farm and butcher;
+- goods categories, so Tier 2 now eats water + staple + fuel.
+
+`tests/test_chains.gd` checks:
+- that category needs are met by any good in the category, and that logs no longer count as fuel;
+- that a fisher must touch water, and that fish alone feeds Settlers to Villagers;
+- that planks gate the pig farm;
+- that meat feeds Villagers while the bakery is stopped;
+- that every good has a consumer, and that goods and money are conserved.
+
+Results:
+- **Headless:** 1052 checks, 0 failures. The hour-long run keeps logs at 30 and the storehouse at 172/330.
+- **GPU suites:** buildings 34 checks and view 118 checks, both with 0 failures.
+
 ### Scripted input playtest (15 October 2026)
 
 This is not the person-led playtest below. The other development session ran

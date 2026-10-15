@@ -42,6 +42,15 @@ func run(t) -> void:
 	_settlers(t)
 	_contest_snapshot(t)
 	_contest_batches(t)
+	# Power, favour, offers and pledges (items 4 to 6).
+	_power(t)
+	_stance_terms(t)
+	_favour(t)
+	_offers(t)
+	_bids(t)
+	_pledges(t)
+	_organising(t)
+	_deal_snapshot(t)
 	# Whole-campaign saves are slow, so the quick tier skips them.
 	if t.get("quick") != true:
 		_legacy_save(t)
@@ -264,7 +273,10 @@ func _buyers_data(t) -> void:
 	for id in db.buildings:
 		if db.buildings[id].has("buyers"):
 			buyers[id] = db.buildings[id].buyers
-	t.check(buyers == {"house":["gentry"],"storehouse":["middle"],"farm":["gentry"],"woodcutter":["industry"],"mill":["industry"],"bakery":["industry"]}, "Buyers: houses and fields to the gentry, workshops to industry, storehouses to the middle class: %s" % str(buyers))
+	# Houses, fields and hunting rights go to the gentry, the storehouse to the
+	# middle class and every other workshop to industry.
+	var rule := buyers.keys().all(func(id): return buyers[id] == (["gentry"] if id in ["house","farm","pig_farm","hunter"] else (["middle"] if db.buildings[id].kind == "storehouse" else ["industry"])))
+	t.check(rule and buyers.has("house") and buyers.has("storehouse") and buyers.has("mill"), "Buyers: houses and fields to the gentry, workshops to industry, storehouses to the middle class: %s" % str(buyers))
 	var goods: Array = db.goods.values().duplicate(true)
 	var tiers: Array = db.tiers.values().duplicate(true)
 	var factions: Array = db.factions.values().duplicate(true)
@@ -320,11 +332,12 @@ func _sales(t) -> void:
 	for case in refusals:
 		t.check(not sim.sell_building(case[0], case[1]) and sim.last_error == case[2], "%s: %s" % [case[3], sim.last_error])
 	t.check(JSON.stringify(sim.snapshot()) == state, "A refused sale changes nothing")
-	# The gentry have 80 s left; a second Tier 2 house costs 120 s.
+	# The gentry have 80 s left; a second Tier 2 house costs 120 s, a little more
+	# now that the first sale has pleased them.
 	var second = _place_house(sim)
 	if second != null:
 		second.tier = 2
-	t.check(second != null and not sim.sell_building(second.uid, "gentry") and sim.last_error == "The Aristocrats cannot pay 1 g 20 s", "A faction cannot pay more than its coffers: " + sim.last_error)
+	t.check(second != null and sim.factions.sale_price(sim, second, "gentry") > 120 and not sim.sell_building(second.uid, "gentry") and sim.last_error == "The Aristocrats cannot pay " + Economy.format(sim.factions.sale_price(sim, second, "gentry")), "A faction cannot pay more than its coffers: " + sim.last_error)
 	_money(t, sim, "refused sales")
 
 ## The owner's share of a producer's labour and of a storehouse's markup.
@@ -592,7 +605,11 @@ func _contest_data(t) -> void:
 ## A hall is inert: no workers, goods, carriers or money of its own. It belongs
 ## to its faction from the start and is never sold.
 func _halls(t) -> void:
+	# Staff the chain first: complete_chain places workplaces that take their
+	# crews only on the next tick.
 	var sim = _village()
+	sim.step(1)
+	var idle: int = sim.idle_workers
 	var treasury: int = sim.treasury
 	var price: int = sim.economy.construction_price(sim, sim.db.buildings.union_hall)
 	var hall = _place_at(sim, "union_hall", [Vector2i(18,23), Vector2i(21,23), Vector2i(21,16)])
@@ -602,7 +619,6 @@ func _halls(t) -> void:
 	t.check(hall.owner == "union" and hall.silver == 0 and sim.treasury == treasury - price, "A union hall belongs to the unions at once and costs only its logs: %s" % Economy.format(price))
 	var alehouse = _place_at(sim, "alehouse", [Vector2i(21,16), Vector2i(18,16), Vector2i(26,21)])
 	t.check(alehouse != null and alehouse.owner == "populist", "An alehouse belongs to the populists")
-	var idle: int = sim.idle_workers
 	sim.step(1)
 	t.check(sim.idle_workers == idle, "Halls take no workers")
 	var touched := false
@@ -760,6 +776,9 @@ func _radius(t) -> void:
 ## Aligned neighbours within 6 tiles pull, up to 3; further houses do not.
 func _clustering(t) -> void:
 	var sim = _contest_village({"neighbour":1, "neighbour_cap":3}, {"neighbour":1, "neighbour_cap":3})
+	# Six houses cost more than the treasury holds once the chain is built.
+	sim.treasury += 500
+	sim.outside_money += 500
 	var house = _find(sim, "house")
 	var near: Array = []
 	for cell in [Vector2i(21,23), Vector2i(18,23), Vector2i(21,16), Vector2i(18,16), Vector2i(26,21)]:
@@ -836,7 +855,7 @@ func _contest_snapshot(t) -> void:
 		index_of[int(state.buildings[index].uid)] = index
 	var entry: Dictionary = state.buildings[index_of[house.uid]]
 	t.check(entry.pull_leader == "union" and entry.pull_streak == 2, "The snapshot holds a house mid-streak (%s %d)" % [entry.pull_leader, entry.pull_streak])
-	var restored = Sim.from_snapshot(state)
+	var restored = Sim.from_snapshot(state, sim.db)
 	t.check(restored != null and JSON.stringify(restored.snapshot()) == JSON.stringify(state), "A streak round-trips through a snapshot")
 	if restored != null:
 		sim.step(sim.PAYDAY_TICKS * 4)
@@ -1034,3 +1053,323 @@ func _has_event(sim, faction_name: String) -> bool:
 		if faction_name in event and "arrived" in event:
 			return true
 	return false
+
+## Power (item 4): every holder's silver goes to exactly one of the Crown, a
+## faction or nobody, and a rented house's savings follow its alignment.
+func _power(t) -> void:
+	var sim = _owned_village()
+	if sim == null:
+		t.check(false, "Set up the owned village for power")
+		return
+	sim.step(sim.PAYDAY_TICKS - sim.tick % sim.PAYDAY_TICKS)
+	var power: Dictionary = sim.factions.power(sim)
+	var total := 0
+	for value in power.values():
+		total += int(value)
+	t.check(total == Economy.FOUNDING_TREASURY + sim.outside_money - sim.payroll, "Power covers every silver but the payroll: %d" % total)
+	var house = _find(sim, "house")
+	var expected_union: int = sim.factions.coffers.union
+	var expected_gentry: int = sim.factions.coffers.gentry
+	var crown: int = sim.treasury
+	for building in sim.buildings.values():
+		if building.definition.kind == "house":
+			if building.aligned == "union":
+				expected_union += building.silver
+		elif building.owner == "gentry":
+			expected_gentry += building.silver
+		elif building.owner.is_empty():
+			crown += building.silver
+	t.check(house.owner == "gentry" and house.aligned == "union" and power.union == expected_union, "A rented union house's savings count for the unions, not its landlord")
+	t.check(power.gentry == expected_gentry and power.crown == crown, "The Crown holds the treasury and its own purses; the gentry their coffers")
+	var shares: Dictionary = sim.factions.shares(sim)
+	var sum := 0
+	for value in shares.values():
+		sum += int(value)
+	t.check(sum <= 100 and sum > 90 and shares.has("unaligned"), "Shares are whole percentages of the whole: %s" % str(shares))
+	t.check(Factions.band(4) == 0 and Factions.band(5) == 1 and Factions.band(15) == 2 and Factions.band(30) == 3, "Power bands: weak, organised, strong, dominant")
+
+## Each stance term reads its state (item 4).
+func _stance_terms(t) -> void:
+	var sim = _village()
+	sim.step(sim.PAYDAY_TICKS * 2 - sim.tick % sim.PAYDAY_TICKS)
+	var f = sim.factions
+	var house = _find(sim, "house")
+	sim.tax_percent = 20
+	sim.markup_percent = 20
+	sim.idle_workers = 3
+	t.check(f.stance_terms(sim, "union").tax == -30 and f.stance_terms(sim, "populist").tax == -30, "Tax: 3 per point above 10%")
+	t.check(f.stance_terms(sim, "populist").markup == -20 and f.stance_terms(sim, "middle").markup == 10 and f.stance_terms(sim, "union").markup == -10, "Markup: per point above 10%, double for the populists")
+	t.check(f.stance_terms(sim, "union").idle_workers == -6 and f.stance_terms(sim, "industry").idle_workers == 6, "Idle workers: −2 for the unions, +2 for industry, per worker")
+	sim.tax_percent = 10
+	sim.markup_percent = 10
+	t.check(f.stance_terms(sim, "union").tax == 0 and f.stance_terms(sim, "middle").markup == 0, "Tax and markup at 10% count nothing")
+	for entry in sim.ledger:
+		entry.unpaid = Economy.WAGE * 2
+	t.check(not sim.ledger.is_empty() and f.stance_terms(sim, "union").unpaid_public_workers == -20, "Unpaid public workers: −10 per worker unpaid each payday")
+	for entry in sim.ledger:
+		entry.unpaid = 0
+	var houses := 0
+	for building in sim.buildings.values():
+		if building.definition.kind == "house":
+			houses += 1
+	_endow(sim, "gentry", 500)
+	t.check(sim.sell_building(house.uid, "gentry"), "Sell the house to the gentry")
+	var average: float = float(Factions.rent(sim, "gentry", house.tier)) / houses
+	t.check(f.stance_terms(sim, "gentry").rent == roundi(average) and f.stance_terms(sim, "union").rent == -roundi(average), "Rent: average rent per house (%.1f)" % average)
+	t.check(f.stance_terms(sim, "gentry").houses_sold == 10 and f.stance_terms(sim, "union").houses_sold == -10, "A house sold to a landlord: +10 gentry, −10 unions")
+	t.check(f.stance_terms(sim, "gentry").buildings_owned == 5 and f.stance_terms(sim, "middle").buildings_owned == 0, "Buildings owned: 5 each")
+	sim.tick += Factions.SALES_PAYDAYS * sim.PAYDAY_TICKS
+	t.check(f.stance_terms(sim, "gentry").houses_sold == 0, "A sale stops counting after 30 paydays")
+	house.aligned = "union"
+	house.happiness_history = [90, 80, 70]
+	t.check(f.stance_terms(sim, "union").happiness == 15 and f.stance_terms(sim, "populist").happiness == 0, "Happiness: 0.5 × (its houses' settled happiness − 50), nothing with no houses")
+	f.trees.gentry = sim.grid.trees.size() * 2
+	t.check(f.stance_terms(sim, "gentry").woodland_lost == -50, "Woodland lost: −1 per percent of the trees at arrival")
+	f.trees.gentry = 0
+	t.check(f.stance_terms(sim, "gentry").woodland_lost == 0, "No baseline, no woodland term")
+	_endow(sim, "union", 100000)
+	var share: int = f.shares(sim).union
+	t.check(share > 15 and f.stance_terms(sim, "middle").union_power == roundi(-0.5 * (share - 15)) and f.stance_terms(sim, "populist").union_power == roundi(-0.5 * (share - 15)), "Union power above 15%%: −0.5 per point (%d%%)" % share)
+	t.check(f.stance_terms(sim, "middle").strikes_riots == 0, "No strikes or riots in a village")
+	var sum := 0
+	for value in f.stance_terms(sim, "middle").values():
+		sum += value
+	t.check(f.target(sim, "middle") == clampi(sum, -100, 100), "The target is the terms' sum, clamped")
+
+## Favour drifts 5 a payday toward its target, clamps, and jumps on events.
+func _favour(t) -> void:
+	var sim = _village()
+	var f = sim.factions
+	sim.tax_percent = 50
+	var target: int = f.target(sim, "union")
+	t.check(target <= -100, "A 50%% tax sets the unions' target to the floor (%d)" % target)
+	var seen: Array = []
+	for index in 3:
+		_paydays(sim, 1)
+		seen.append(f.favour.union)
+	t.check(seen == [-5, -10, -15], "Favour moves 5 toward the target each payday: %s" % str(seen))
+	f.favour.union = -98
+	_paydays(sim, 1)
+	t.check(f.favour.union == -100, "Favour stops at −100")
+	f.jump("union", 500)
+	t.check(f.favour.union == 100, "Jumps clamp at +100")
+	f.favour.gentry = -100
+	t.check(f.price_percent("gentry") == 75, "−100 favour: 75% of book value")
+	f.favour.gentry = 100
+	t.check(f.price_percent("gentry") == 150, "+100 favour: 150% of book value")
+	f.favour.gentry = 0
+	t.check(f.price_percent("gentry") == 100, "Neutral favour: book value")
+	t.check(not f.favour.has("culture"), "An absent faction has no favour")
+	var marsh_site = Sites.first_bread(SeededRNG.new(73))
+	marsh_site.biome = "marsh"
+	var marsh = Sim.new(73, null, marsh_site)
+	_paydays(marsh, 2)
+	t.check(marsh.factions.favour.is_empty(), "A village with no factions keeps no favour")
+	# A sale pleases the buyer and, for a house, costs the unions.
+	var house = _find(sim, "house")
+	_endow(sim, "gentry", 500)
+	f.favour.union = 0
+	t.check(sim.sell_building(house.uid, "gentry") and f.favour.gentry == Factions.BUYER_PLEASED and f.favour.union == Factions.HOUSE_SOLD, "A house sale: buyer +5, unions −5")
+	var hall = _place_at(sim, "union_hall", [Vector2i(18,23), Vector2i(21,23), Vector2i(21,16)])
+	t.check(hall != null, "Place a union hall to demolish")
+	if hall != null:
+		f.favour.union = 0
+		sim.demolish(hall.cell)
+		t.check(f.favour.union == Factions.DEMOLISHED, "Demolishing a faction's building costs it 15 favour")
+	_money(t, sim, "favour")
+
+## The ordinary offer schedule (item 5): every 5 paydays per faction,
+## staggered; offers lapse after 3; replays and batch sizes agree.
+func _offers(t) -> void:
+	var a = _village()
+	var b = _village()
+	_endow(a, "union", 300)
+	_endow(b, "union", 300)
+	var made := {}
+	var lapsed := false
+	var capped := true
+	for index in Factions.OFFER_PAYDAYS * a.PAYDAY_TICKS * 2:
+		a.step(1)
+		for id in a.factions.offers:
+			var offer: Dictionary = a.factions.offers[id]
+			if offer.is_empty():
+				continue
+			if not made.has(id):
+				made[id] = a.tick
+				capped = capped and int(offer.silver) <= int(a.factions.coffers[id])
+			lapsed = lapsed or a.tick > int(offer.expires)
+	b.step(Factions.OFFER_PAYDAYS * b.PAYDAY_TICKS * 2)
+	t.check(made.has("union") and made.has("gentry"), "Factions with silver make offers: %s" % str(made))
+	var ticks: Array = made.values()
+	ticks.sort()
+	t.check(ticks.size() >= 2 and ticks[0] != ticks[ticks.size() - 1], "Offers are staggered by faction")
+	t.check(capped, "An offer is capped by its faction's coffers")
+	t.check(not lapsed, "No offer outlives its expiry")
+	t.check(JSON.stringify(a.snapshot()) == JSON.stringify(b.snapshot()), "Offers are the same across tick batch sizes and replays")
+	a.factions.offers.union = {"type":"pledge", "pledge":"tax_cap", "silver":20, "expires":a.tick + 1}
+	a.step(a.PAYDAY_TICKS - a.tick % a.PAYDAY_TICKS)
+	t.check((a.factions.offers.union.is_empty() or int(a.factions.offers.union.expires) > a.tick), "An expired offer lapses at the next payday")
+	var broke = _village()
+	broke.factions.coffers.middle = 5
+	broke.outside_money -= 45
+	t.check(broke.factions.candidates(broke, "middle").is_empty(), "A faction with under 10 s makes no offer")
+	_money(t, a, "offers")
+
+## Installs one of a faction's candidate offers by type (and pledge), or {}.
+func _install(sim, id: String, type: String, pledge: String = "") -> Dictionary:
+	for offer in sim.factions.candidates(sim, id):
+		if offer.type == type and (pledge.is_empty() or offer.get("pledge", "") == pledge):
+			offer["expires"] = sim.tick + Factions.OFFER_EXPIRY * sim.PAYDAY_TICKS
+			sim.factions.offers[id] = offer
+			return offer
+	return {}
+
+## Accepting a bid is the same sale as sell_building, plus favour.
+func _bids(t) -> void:
+	var a = _village()
+	var b = _village()
+	_endow(a, "industry", 400)
+	_endow(b, "industry", 400)
+	var offer := _install(a, "industry", "bid")
+	t.check(not offer.is_empty() and a.buildings[int(offer.uid)].definition.kind == "producer", "Industry bids for a Crown workshop: %s" % str(offer))
+	if offer.is_empty():
+		return
+	t.check(a.accept_offer("industry") and b.sell_building(int(offer.uid), "industry"), "Accept the bid, and sell the same workshop directly")
+	t.check(a.treasury == b.treasury and a.factions.coffers.industry == b.factions.coffers.industry and a.buildings[int(offer.uid)].owner == "industry", "Accepting a bid moves what the sale moves")
+	t.check(a.factions.favour.industry == b.factions.favour.industry + Factions.OFFER_ACCEPTED and a.factions.offers.industry.is_empty(), "Accepting adds 10 favour and closes the offer")
+	t.check(not a.accept_offer("industry") and "No open offer" in a.last_error, "There is nothing left to accept")
+	var c = _village()
+	_endow(c, "gentry", 400)
+	var house_bid := _install(c, "gentry", "bid")
+	var before: int = c.factions.favour.gentry
+	t.check(not house_bid.is_empty() and c.decline_offer("gentry") and c.factions.favour.gentry == before + Factions.OFFER_DECLINED and c.factions.offers.gentry.is_empty(), "Declining closes the offer for −5 favour")
+	_money(t, a, "bids")
+
+## Pledges lock their levers, pay the treasury, and are kept or broken.
+func _pledges(t) -> void:
+	var sim = _village()
+	_endow(sim, "union", 300)
+	sim.tax_percent = 15
+	var offer := _install(sim, "union", "pledge", "tax_cap")
+	t.check(not offer.is_empty() and int(offer.silver) > 0, "The unions offer silver for a tax cap: %s" % str(offer))
+	if offer.is_empty():
+		return
+	var treasury: int = sim.treasury
+	var coffers: int = sim.factions.coffers.union
+	t.check(sim.accept_offer("union") and sim.tax_percent == 10, "Accepting the tax cap lowers the tax to 10%")
+	t.check(sim.treasury == treasury + int(offer.silver) and sim.factions.coffers.union == coffers - int(offer.silver) and sim.period.deals >= int(offer.silver), "The pledge's silver goes to the treasury as a deal")
+	t.check(not sim.set_tax_percent(11) and sim.last_error == "Pledged to the Trade unions: tax at or below 10%", "A pledged lever refuses: " + sim.last_error)
+	t.check(sim.set_tax_percent(5), "Changes the pledge allows still work")
+	_money(t, sim, "pledge")
+	# Kept to the end: +10.
+	sim.factions.favour.union = 0
+	sim.tax_percent = 0
+	sim.factions.pledges.union[0].until = sim.tick + 1
+	sim.step(sim.PAYDAY_TICKS - sim.tick % sim.PAYDAY_TICKS)
+	t.check(sim.factions.pledges.union.is_empty() and sim.set_tax_percent(30), "A pledge ends on time and frees its lever")
+	t.check(_has_text(sim, Factions.PLEDGE_KEPT_TEXT % ["Trade unions", "tax at or below 10%", sim.tick]), "Keeping it is announced")
+	# Broken: −40 and no offers for 30 paydays.
+	sim.factions.offers.union = {}
+	t.check(not _install(sim, "union", "pledge", "tax_cap").is_empty() and sim.accept_offer("union"), "Pledge again")
+	sim.factions.favour.union = 0
+	t.check(sim.break_pledge("union:tax_cap") and sim.factions.favour.union == Factions.PLEDGE_BROKEN and sim.set_tax_percent(20), "Breaking costs 40 favour and frees the lever")
+	t.check(sim.factions.blocked_until.union == sim.tick + Factions.BLOCK_PAYDAYS * sim.PAYDAY_TICKS, "and blocks the faction's offers for 30 paydays")
+	sim.step(Factions.OFFER_PAYDAYS * sim.PAYDAY_TICKS * 2)
+	t.check(sim.factions.offers.union.is_empty(), "A blocked faction makes no offers")
+	t.check(not sim.break_pledge("union:tax_cap") and not sim.break_pledge("nonsense"), "Only running pledges can be broken")
+	# The other village levers.
+	var other = _village()
+	_endow(other, "union", 600)
+	_endow(other, "middle", 300)
+	_endow(other, "gentry", 600)
+	_endow(other, "populist", 300)
+	other.markup_percent = 25
+	t.check(not _install(other, "populist", "pledge", "markup_cap").is_empty() and other.accept_offer("populist") and other.markup_percent == 10, "A markup cap lowers the markup to 10%")
+	t.check(not other.set_markup_percent(12) and "markup at or below 10%" in other.last_error, "and holds it there")
+	t.check(not _install(other, "middle", "pledge", "markup_floor").is_empty() and other.accept_offer("middle") and not other.set_markup_percent(9) and "markup at 10% or higher" in other.last_error, "A markup floor holds the markup at its level")
+	t.check(not _install(other, "union", "pledge", "no_house_sales").is_empty() and other.accept_offer("union"), "Pledge no house sales")
+	t.check(not other.sell_building(_find(other, "house").uid, "gentry") and "no house sold to a landlord" in other.last_error, "A house cannot be sold while pledged")
+	t.check(not other.factions.candidates(other, "gentry").any(func(o): return o.type == "bid" and other.buildings[int(o.uid)].definition.kind == "house"), "and the gentry stop bidding for houses")
+	var mill = _find(other, "mill")
+	other.set_workers_enabled(mill.uid, false)
+	t.check(not _install(other, "union", "pledge", "no_workplace_stopped").is_empty() and other.accept_offer("union") and mill.workers_enabled, "No workplace stopped restarts stopped workplaces")
+	t.check(not other.set_workers_enabled(mill.uid, false) and "no workplace stopped" in other.last_error and other.set_workers_enabled(mill.uid, true), "and nobody can be stopped")
+	t.check(not _install(other, "gentry", "pledge", "woodland_kept").is_empty() and other.accept_offer("gentry"), "Pledge to keep the woodland")
+	var level: int = other.factions.pledges.gentry[0].level
+	t.check(level == other.grid.trees.size(), "The woodland pledge holds today's trees (%d)" % level)
+	other.factions.favour.gentry = 0
+	# Fell more trees than can grow back before payday.
+	for cell in other.grid.trees.keys().slice(0, 20):
+		other.grid.trees.erase(cell)
+	other.step(other.PAYDAY_TICKS - other.tick % other.PAYDAY_TICKS)
+	t.check(other.factions.pledges.gentry.is_empty() and other.factions.favour.gentry <= Factions.PLEDGE_BROKEN + Factions.FAVOUR_STEP, "Losing trees breaks the woodland pledge at payday")
+	_money(t, other, "levers")
+
+## An organising offer is accepted by placing the hall near the named house.
+func _organising(t) -> void:
+	var sim = _village()
+	_endow(sim, "union", 300)
+	var offer := _install(sim, "union", "organise")
+	t.check(not offer.is_empty() and sim.buildings[int(offer.uid)].definition.kind == "house", "The unions offer to fund a hall near an unaligned house")
+	if offer.is_empty():
+		return
+	t.check(not sim.accept_offer("union") and "Place a union hall" in sim.last_error, "Accepting means placing the hall: " + sim.last_error)
+	var treasury: int = sim.treasury
+	var coffers: int = sim.factions.coffers.union
+	var price: int = sim.economy.construction_price(sim, sim.db.buildings.union_hall)
+	var hall = _place_at(sim, "union_hall", [Vector2i(18,23), Vector2i(21,23), Vector2i(21,16)])
+	t.check(hall != null and Factions.gap(hall, sim.buildings[int(offer.uid)]) <= Factions.ORGANISE_TILES, "Place a union hall near the house")
+	if hall == null:
+		return
+	t.check(sim.factions.offers.union.is_empty() and sim.factions.coffers.union == coffers - int(offer.silver) and sim.treasury == treasury - price + int(offer.silver), "The unions pay %s toward it" % Economy.format(int(offer.silver)))
+	t.check(sim.factions.favour.union == Factions.OFFER_ACCEPTED, "and are pleased")
+	t.check(not sim.factions.candidates(sim, "union").any(func(o): return o.type == "organise" and int(o.uid) == int(offer.uid)), "No more organising offers for a house with a hall near")
+	_money(t, sim, "organising")
+
+## Item 6: favour, offers and pledges round-trip; malformed ones are rejected.
+func _deal_snapshot(t) -> void:
+	var sim = _village()
+	_endow(sim, "union", 300)
+	_endow(sim, "industry", 300)
+	_install(sim, "union", "pledge", "tax_cap")
+	t.check(sim.accept_offer("union") and not _install(sim, "industry", "bid").is_empty(), "Set up a running pledge and an open bid")
+	sim.factions.favour.gentry = -37
+	sim.factions.blocked_until.middle = sim.tick + 400
+	var state: Dictionary = sim.snapshot()
+	var restored = Sim.from_snapshot(state)
+	t.check(restored != null and JSON.stringify(restored.snapshot()) == JSON.stringify(state), "Favour, an open bid and a running pledge round-trip")
+	if restored != null:
+		t.check(not restored.set_tax_percent(20), "A restored pledge still locks its lever")
+		sim.step(sim.PAYDAY_TICKS * 6)
+		restored.step(sim.PAYDAY_TICKS * 6)
+		t.check(JSON.stringify(restored.snapshot()) == JSON.stringify(sim.snapshot()), "A restored village makes the same offers")
+	var uid: int = int(state.factions.industry.offer.get("uid", -1))
+	var tampers := [
+		["gentry", "favour", 101, "favour above 100"],
+		["gentry", "favour", -101, "favour below −100"],
+		["industry", "offer", {"type":"bid", "uid":9999, "silver":5, "expires":9}, "a bid for a missing building"],
+		["industry", "offer", {"type":"bid", "uid":_find(sim, "house").uid, "silver":5, "expires":9}, "a bid for a building it does not buy"],
+		["industry", "offer", {"type":"loan", "uid":uid, "silver":5, "expires":9}, "an unknown offer type"],
+		["industry", "offer", {"type":"organise", "uid":uid, "silver":5, "expires":9}, "an organising offer from a faction that does not recruit"],
+		["industry", "offer", {"type":"bid", "uid":uid, "silver":-5, "expires":9}, "a negative offer"],
+		["union", "offer", {"type":"organise", "uid":_find(sim, "mill").uid, "silver":5, "expires":9}, "an organising offer naming a workshop"],
+		["union", "pledges", [{"type":"woodland_kept", "until":9, "level":1, "silver":1}], "a pledge the faction does not seek"],
+		["union", "pledges", [{"type":"tax_cap", "until":9, "level":0, "silver":1}, {"type":"tax_cap", "until":9, "level":0, "silver":1}], "a repeated pledge"],
+		["union", "pledges", [{"type":"tax_cap", "until":-1, "level":0, "silver":1}], "a negative pledge end"],
+		["middle", "blocked_until", -1, "a negative block"],
+		["middle", "sales", [-4], "a negative sale tick"],
+		["middle", "trees", 1.5, "a fractional tree count"],
+	]
+	for tamper in tampers:
+		var broken: Dictionary = state.duplicate(true)
+		broken.factions[tamper[0]][tamper[1]] = tamper[2]
+		t.check(Sim.from_snapshot(broken) == null, "Snapshots with %s are rejected" % tamper[3])
+	var short: Dictionary = state.duplicate(true)
+	short.factions.middle.erase("favour")
+	t.check(Sim.from_snapshot(short) == null, "A faction entry missing one field is rejected")
+	var legacy: Dictionary = state.duplicate(true)
+	for id in legacy.factions:
+		for key in Factions.ENTRY_KEYS.slice(3):
+			legacy.factions[id].erase(key)
+	var old = Sim.from_snapshot(legacy)
+	t.check(old != null and old.factions.favour.gentry == 0 and old.factions.offers.industry.is_empty() and old.factions.pledges.union.is_empty(), "An entry from before favour loads neutral, with no deals")

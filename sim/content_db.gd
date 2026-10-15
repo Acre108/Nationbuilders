@@ -3,6 +3,11 @@ extends RefCounted
 ## Build menu categories, in display order.
 const TERRAINS := ["grass", "forest", "rock", "marsh", "sand", "water", "stream", "river", "lake", "ocean"]
 const CATEGORIES := {"housing":"Housing", "logistics":"Logistics", "resources":"Resources", "food":"Food"}
+## Terrains a fisher or dyer may stand beside (`adjacent_terrain`); matches Grid.WATER.
+const WATER_TERRAINS := ["water", "stream", "river", "lake", "ocean"]
+## Goods categories (docs/SUPPLY_CHAINS.md §3). A tier need may name a category
+## instead of a good; any good listed in it meets the need.
+const GOOD_CATEGORIES := {"basic":"Basic food", "staple":"Staple food", "fuel":"Fuel", "cloth":"Cloth", "masonry":"Masonry", "comfort":"Comfort"}
 ## Social classes of factions and house tiers; Settlers have none ("").
 const CLASSES := ["", "working", "middle", "elite"]
 const SETTLEMENTS := ["village", "town"]
@@ -25,6 +30,8 @@ const PULL_TERMS := ["employment", "wages_in_full", "hall", "neighbour", "neighb
 var goods: Dictionary = {}
 var buildings: Dictionary = {}
 var tiers: Dictionary = {}
+## Derived: each goods category's goods, in goods.json order.
+var category_goods: Dictionary = {}
 ## Faction rows by id, and the factions each biome's sites interest.
 var factions: Dictionary = {}
 var biome_factions: Dictionary = {}
@@ -56,11 +63,14 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 	goods.clear()
 	buildings.clear()
 	tiers.clear()
+	category_goods.clear()
 	factions.clear()
 	biome_factions.clear()
 	_index(good_rows, goods, "goods", false)
 	_index(building_rows, buildings, "buildings", false)
 	_index(tier_rows, tiers, "tiers", true)
+	for category in GOOD_CATEGORIES:
+		category_goods[category] = []
 	for id in goods:
 		if not goods[id].get("name", "") is String or goods[id].get("name", "").is_empty():
 			errors.append("Good %s needs a name" % id)
@@ -68,6 +78,19 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 			errors.append("Good %s needs a valid color" % id)
 		if goods[id].has("price") and not _integer(goods[id].price, 0):
 			errors.append("Good %s: price must be whole silver" % id)
+		if GOOD_CATEGORIES.has(id):
+			errors.append("Good %s: id clashes with a goods category" % id)
+		var categories: Variant = goods[id].get("categories", [])
+		if not categories is Array:
+			errors.append("Good %s: categories must be an array" % id)
+			continue
+		for category in categories:
+			if not GOOD_CATEGORIES.has(category):
+				errors.append("Good %s: unknown category %s" % [id, str(category)])
+			elif id in category_goods[category]:
+				errors.append("Good %s: category %s listed twice" % [id, category])
+			else:
+				category_goods[category].append(id)
 	for id in buildings:
 		var row: Dictionary = buildings[id]
 		var prefix := "Building %s: " % id
@@ -98,6 +121,12 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 				errors.append(prefix + "invalid forestry job or work radius")
 			if not row.inputs.is_empty() or (row.forest_action == "plant" and not row.outputs.is_empty()):
 				errors.append(prefix + "forestry must use trees rather than recipe inputs; planting has no goods output")
+		# A hunter's lodge takes game within work_radius tiles (wildlife.gd).
+		if row.has("hunts"):
+			if row.hunts != true or row.kind != "producer" or row.has("forest_action") or not _integer(row.get("work_radius"),1):
+				errors.append(prefix + "hunts must be true, on a producer with a work radius and no forestry job")
+			elif not row.inputs.is_empty() or row.outputs.is_empty():
+				errors.append(prefix + "hunting takes game rather than recipe inputs and yields goods")
 		if row.get("kind") == "producer" and (row.get("cycle_ticks", 0) < 1 or (row.get("outputs", {}).is_empty() and row.get("forest_action", "") != "plant" and not row.get("service", false))):
 			errors.append(prefix + "producer needs a cycle and outputs")
 		# A service that houses need ("provides", such as a chapel) covers houses
@@ -154,6 +183,14 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 			for terrain in row.terrain:
 				if terrain not in TERRAINS:
 					errors.append(prefix + "unknown terrain " + str(terrain))
+		# A fisher must touch water: its footprint shares an edge with one of these.
+		if row.has("adjacent_terrain"):
+			if not row.adjacent_terrain is Array or row.adjacent_terrain.is_empty():
+				errors.append(prefix + "adjacent_terrain must be a nonempty array")
+			else:
+				for terrain in row.adjacent_terrain:
+					if terrain not in TERRAINS:
+						errors.append(prefix + "unknown adjacent terrain " + str(terrain))
 	for id in tiers:
 		var row: Dictionary = tiers[id]
 		if not row.get("name", "") is String or row.get("name", "").is_empty():
@@ -161,7 +198,7 @@ func validate(good_rows: Variant, building_rows: Variant, tier_rows: Variant, fa
 		# A house's class decides which factions can win it (FACTIONS.md §3).
 		if not row.get("class") is String or row["class"] not in CLASSES:
 			errors.append("Tier %s: class must be one of \"\", working, middle or elite" % id)
-		_goods_map(row.get("consumption"), "Tier %s consumption" % id)
+		_needs_map(row.get("consumption"), "Tier %s consumption" % id)
 		for field in ["consume_every_ticks", "upgrade_after_ticks", "downgrade_after_ticks", "workers_per_house"]:
 			if not _integer(row.get(field), 0 if field == "upgrade_after_ticks" else 1):
 				errors.append("Tier %s: invalid %s" % [id, field])
@@ -322,6 +359,33 @@ func _goods_map(value: Variant, label: String) -> void:
 			errors.append(label + ": unknown good " + str(id))
 		if not _integer(value[id], 1):
 			errors.append(label + ": amounts must be positive integers")
+
+## A tier's consumption: a goods map whose keys may also be goods categories
+## with at least one good.
+func _needs_map(value: Variant, label: String) -> void:
+	if not value is Dictionary:
+		errors.append(label + " must be a goods map")
+		return
+	for id in value:
+		if not goods.has(id) and category_goods.get(id, []).is_empty():
+			errors.append(label + ": unknown good or empty category " + str(id))
+		if not _integer(value[id], 1):
+			errors.append(label + ": amounts must be positive integers")
+
+## The goods that meet a need: the good itself, or every good of a category.
+func need_goods(need: String) -> Array:
+	return [need] if goods.has(need) else category_goods.get(need, [])
+
+## A need's display name: the good's name, or the category's.
+func need_name(need: String) -> String:
+	return str(goods[need].name) if goods.has(need) else str(GOOD_CATEGORIES.get(need, need))
+
+## The tier need a good meets, or "" if that tier does not eat it.
+func need_for(tier: int, good: String) -> String:
+	for need in tiers[tier].consumption:
+		if good in need_goods(need):
+			return need
+	return ""
 
 func _integer(value: Variant, minimum: int) -> bool:
 	return (value is int or value is float) and is_finite(float(value)) and float(value) == floor(float(value)) and value >= minimum

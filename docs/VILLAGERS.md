@@ -277,6 +277,49 @@ Settled:
 Still open:
 - Automatic allocation of a share of income to the capital reserve.
 
+### 5.7 Economy test village
+
+A fixed village for balance work at a larger scale than the soaks in 5.5. It has eight homesteads, every public service, and producers sized for eight Villager houses, so money is what is under test. It is `Scenario.economy_test(sim, halls)` in `sim/scenario.gd`.
+- **Run it headless:** `Godot.exe --headless --path . --script tools/economy_village.gd -- [--minutes=30] [--tax=15] [--markup=10] [--reserve] [--halls] [--every=N]`. It prints one row a minute (tiers, happiness, morale, treasury, the minute's ledger, wages, household and storehouse purses, stock), then goods made and eaten per minute and a findings list.
+- **Watch it in the game:** `Godot.exe --path . -- --scenario=economy` (milestone 1 map only).
+- **Test:** `_economy_village` in `tests/test_sim.gd` checks that it builds, that every job is staffed, that every house touches a road and has a chapel in range, that every need has a maker, that all houses reach Villagers within 3 minutes, and that money is conserved.
+
+**Layout** (milestone 1 coordinates; `=` road, `H` homestead, `+` chapel, `S` storehouse, `F` farm, `M` mill, `B` bakery, `W` well, `w` woodshed, `C` woodcutter, `P` forester, `E` berry bushes, `U`/`A` optional union hall and alehouse, `f` forest; columns run from x = −1 to x = 39):
+
+```
+  12 .f..f..f..f.....f..f..f..f......++.......
+  13 f..f..f..f..f........f..f....HH.++.HH.HH.
+  14 ..f..f..f..f..f..f........f..HH.++.HH.HH.
+  15 .f..f..f..f.................=============
+  16 f.....f..f...........=......=HH.HH.HH.HH.
+  17 ..f..f..f............=......=HH.HH.HH.HH.
+  18 .f..fFFF..fMMFFF.MM..=..BBEE=.SSS....EE..
+  19 .....FFF.W.MMFFF.MMww=W.BBEE=.SSSfW.fEE..
+  20 =========================================
+  21 .CC.PP.BB.MMWFFFBBSSS=HH.CC....CC.PP.f..f
+  22 .CCfPPfBBfMM.FFFBBSSS=HH.CC....CCfPPf....
+  23 ........f..........AA=UU........f..f..f..
+```
+
+**Sizing**, per 200 ticks at full morale. Eight Villager houses eat 8 water, 8 staple and 8 fuel, and three bakeries use 12 more water.
+
+| Chain | Buildings | Makes | Needed |
+| --- | --- | --- | --- |
+| Bread | 3 farms → 3 mills → 3 bakeries | 17 wheat, 13 flour, 12 bread | 8 bread |
+| Fuel | 3 woodcutters → 1 woodshed | 9 logs, 13 firewood | 8 firewood (4 logs) |
+| Water | 4 wells | 32 | 20 |
+| Services | chapel, 2 foresters | — | 30 s upkeep a payday |
+| Settler food | 2 berry bushes | 10 berries | only until promotion |
+
+Jobs are 34, plus 12 carriers, against 52 workers at Settlers and 84 at Villagers. Founding logs are topped up to cover construction, plus 60 spare logs. Storehouses are placed last, so construction uses free founding stock. The treasury still pays each building's working money, which leaves 1.17 g after building.
+
+**First run, 15 October 2026** (30 minutes, seed 73, 15% tax, 10% markup, staple and fuel needs):
+- **Tiers hold, but nobody is well off.** All eight houses are Villagers from minute 3. Happiness is 75–100% and morale 85–97%. Three or four houses at a time read "cannot afford staple food" or "cannot afford fuel".
+- **Wages do not cover a Villager's basket.** A house earns 18–25 s a payday after tax. Bread at 18 s, firewood at 6 s and water at 3 s retail cost 27 s. Savings fall from 50 s to about 20 s. 38 of 84 workers are idle, and idle workers earn nothing.
+- **Storehouses keep the money.** The purse cap is the cost of restocking every good the village makes to its limit of 30. For this village that is about 13.5 g for an empty store (the bread chain alone is 12 g; firewood adds 1.5 g), so no surplus reaches the treasury: trade income was 0 for all 30 minutes. The first storehouse sat on 5–6.5 g. The second spent its 1 g on wheat that no mill fetched and was at 0 s from minute 15. After that it cannot buy from the eastern well or woodcutter, which read "output full".
+- **The treasury cannot pay services.** Tax brings 69 s a minute against 90 s of upkeep (chapel and two foresters). 5.24 g of public pay went unpaid, and frustration reached 85.
+- **Stock is always empty.** Bread was out in 93% of samples and fuel in 94%. Goods move straight to pantries as they are made, and several producers sit full beside a broke storehouse.
+
 ## 6. Open questions
 
 1. **What should happiness do?** Settled on 14 October 2026: it sets the demotion threshold and workplace speed (3.1). Not chosen: scaling the workers a house provides; faction problems will take that role.

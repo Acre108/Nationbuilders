@@ -1,8 +1,8 @@
 extends RefCounted
 ## Blender-authored kit and presentation-only local inventory displays.
 const ASSET_DIR := "res://assets/buildings/medieval/"
-const MODELS := ["house", "storehouse", "farm", "well", "woodcutter", "forester", "mill", "bakery", "chapel", "berry_bushes"]
-const GOODS := ["wheat", "flour", "water", "logs", "bread", "berries"]
+const MODELS := ["house", "storehouse", "farm", "well", "woodcutter", "forester", "mill", "bakery", "chapel", "berry_bushes", "fisher", "woodshed", "sawmill", "pig_farm", "butcher", "hunter"]
+const GOODS := ["wheat", "flour", "water", "logs", "bread", "berries", "fish", "meat", "pigs", "firewood", "planks"]
 var materials: Dictionary
 var scenes: Dictionary = {}
 var meshes: Dictionary = {}
@@ -117,4 +117,22 @@ func _stock_position(id: String, input: bool, slot: int) -> Vector3:
 		"mill":
 			if input: return Vector3(-0.76, 0.17+float(slot/3)*0.35, -0.52+float(slot%3)*0.34)
 			return Vector3(0.66, 0.22+float(slot/3)*0.30, -0.05+float(slot%3)*0.33)
+		"hunter":
+			return Vector3(-0.02+float(slot%2)*0.32, 0.02+float(slot/2)*0.12, 0.74)
+		"fisher":
+			return Vector3(-0.62+float(slot%3)*0.34, 0.02+float(slot/3)*0.10, 0.66)
+		"woodshed":
+			# Logs wait under the lean-to; split firewood is stacked out front.
+			if input: return Vector3(-0.30+float(slot%2)*0.30, 0.08+float(slot/2)*0.26, -0.20)
+			return Vector3(-0.15+float(slot%3)*0.32, 0.02+float(slot/3)*0.28, 0.46)
+		"sawmill":
+			if input: return Vector3(-1.10+float(slot%3)*0.30, 0.08+float(slot/3)*0.26, 0.45)
+			return Vector3(-0.15+float(slot%3)*0.30, 0.03+float(slot/3)*0.22, 0.45)
+		"pig_farm":
+			# Feed waits by the hut; pigs for the butcher wander in the pen.
+			if input: return Vector3(-1.15+float(slot%3)*0.28, 0.08+float(slot/3)*0.30, 0.70)
+			return Vector3(0.15+float(slot%3)*0.42, 0.08, 0.05+float(slot/3)*0.36)
+		"butcher":
+			if input: return Vector3(-0.98, 0.02+float(slot/3)*0.20, -0.70+float(slot%3)*0.42)
+			return Vector3(-0.45+float(slot%4)*0.30, 0.35, 0.59+float(slot/4)*0.25)
 	return Vector3(-0.40+float(slot%3)*0.32, 0.15+float(slot/3)*0.30, 0.76)

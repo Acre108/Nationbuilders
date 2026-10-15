@@ -23,6 +23,7 @@ func run(t) -> void:
 	_happiness_effects(t)
 	_chapels_and_berries(t)
 	_priority_and_reserve(t)
+	_economy_village(t)
 
 func _chain(t) -> void:
 	var sim = Sim.new(73)
@@ -490,7 +491,7 @@ func _happiness_effects(t) -> void:
 	t.check(Needs.settled(house) == -1 and Needs.morale(sim) == 100, "Before a full cycle a house has no settled happiness and morale is full")
 	house.tier = 2
 	for index in 1500:
-		for good in ["water","bread","logs"]:
+		for good in ["water","bread","firewood"]:
 			if house.input.count(good) == 0: house.input.add(good)
 		sim.step(1)
 	t.check(house.tier == 2 and Needs.settled(house) == 75 and house.happiness_history.size() == 3 and not house.needs_met.has("chapel"), "One missing need (no chapel) leaves a house unhappy but not demoted: settled %d" % Needs.settled(house))
@@ -587,6 +588,38 @@ func _priority_and_reserve(t) -> void:
 	_money_conserved(t,town,"service reserve")
 	var restored = Sim.from_snapshot(town.snapshot())
 	t.check(restored != null and restored.keep_service_reserve, "The reserve setting survives a snapshot")
+
+## The economy test village (VILLAGERS.md §5.7) builds whole on the milestone 1
+## map, staffs everything at Settlers, serves every house, and promotes.
+func _economy_village(t) -> void:
+	var sim = Sim.new(73)
+	t.check(Scenario.economy_test(sim), "Economy test village builds: " + sim.last_error)
+	var ids := {}
+	var houses: Array = []
+	var jobs := 0
+	for building in sim.buildings.values():
+		ids[building.definition.id] = true
+		jobs += int(building.definition.get("carriers", building.definition.workers))
+		t.check(not sim.grid.access(building).is_empty(), "Economy village %s at %s touches a road" % [building.definition.id, building.cell])
+		if building.definition.kind == "house": houses.append(building)
+	t.check(houses.size() == 8, "Economy village has eight homesteads")
+	t.check(jobs <= sim.workforce(), "Economy village staffs every job and carrier at Settlers: %d of %d" % [jobs, sim.workforce()])
+	for row in sim.db.buildings.values():
+		if Economy.is_public(row): t.check(ids.has(row.id), "Economy village has the %s service" % row.id)
+	for tier in sim.db.tiers.values():
+		for need in tier.consumption:
+			var made := false
+			for good in sim.db.category_goods.get(need, [need]):
+				for id in ids:
+					made = made or sim.db.buildings[id].outputs.has(good)
+			t.check(made, "Economy village makes something for the %s need" % need)
+	sim.step(1)
+	for house in houses:
+		for service in Needs.counted_services(sim.db.tiers[2]):
+			t.check(sim.serves(house, service), "Economy village house at %s has a %s in range" % [house.cell, service])
+	sim.step(1800 - sim.tick)
+	t.check(houses.all(func(house): return house.tier == 2), "Every economy village house reaches Villagers within 3 minutes")
+	_money_conserved(t, sim, "economy village")
 
 func _place_first(sim, id: String, cells: Array) -> bool:
 	for cell in cells:

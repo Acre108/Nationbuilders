@@ -31,7 +31,7 @@ func _run() -> void:
 	check(not view.hud.side.visible and not view.hud.build_menu.visible and not view.hud.toast.visible, "Start has no persistent text panels")
 	check(not view.hud.blocks_mouse(Vector2(640,40)), "Top of play screen is unobstructed")
 	var bar: Rect2 = view.hud.stock_bar.get_global_rect()
-	check(view.hud.stock_bar.visible and view.hud.stock_label.text.begins_with("Storehouse ") and " / 180" in view.hud.stock_label.text and "Bread" in view.hud.stock_label.text, "Stock bar shows storehouse fill and key stocks (%s)" % view.hud.stock_label.text)
+	check(view.hud.stock_bar.visible and view.hud.stock_label.text.begins_with("Storehouse ") and " / 330" in view.hud.stock_label.text and "Bread" in view.hud.stock_label.text, "Stock bar shows storehouse fill and key stocks (%s)" % view.hud.stock_label.text)
 	check(bar.position.x >= view.hud.treasury_button.get_global_rect().end.x and bar.end.x < view.hud.map_button.get_global_rect().position.x, "Stock bar sits between the gold counter and the top-right buttons")
 	await _click(view.hud.cog_button.get_global_rect().get_center())
 	check(view.hud.options_menu.visible and view.hud.cog_button.button_pressed, "Top-right cog opens options")
@@ -124,6 +124,7 @@ func _run() -> void:
 	view.atmosphere.wetness = 0.0
 	_check_weather_audio()
 	await _check_treasury()
+	await _check_factions()
 	await _click(view.hud.build_button.get_global_rect().get_center())
 	check(view.hud.build_menu.visible and view.hud.category_list.visible and not view.hud.building_list.visible, "Build button opens category list")
 	check(view.hud.build_category_buttons.keys() == ["housing","logistics","resources","food"], "Build categories follow content order")
@@ -280,6 +281,130 @@ func _check_treasury() -> void:
 	await _click(counter.get_center())
 	await _key(KEY_ESCAPE)
 	check(not view.hud.treasury_menu.visible and not view.hud.treasury_button.button_pressed, "Escape closes the Treasury panel")
+
+## PLAN-factions item 7: faction chips, the Factions panel's offers and
+## pledges, a padlocked lever, the inspector's sale button and the class
+## overlay, all through real input.
+func _check_factions() -> void:
+	var sim = view.sim
+	var hud = view.hud
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	await process_frame
+	check(hud.faction_chips.keys() == sim.factions.coffers.keys() and not hud.faction_chips.has("union"), "Chips show the factions present at founding (%s)" % ", ".join(hud.faction_chips.keys()))
+	var counter: Rect2 = hud.treasury_button.get_global_rect()
+	var chips: Rect2 = hud.faction_bar.get_global_rect()
+	check(hud.faction_bar.visible and chips.position.y >= counter.end.y and chips.position.x < 40 and not hud.blocks_mouse(Vector2(640,40)), "Faction chips sit under the gold counter")
+	var house = null
+	var farm = null
+	for building in sim.buildings.values():
+		if building.definition.id == "house" and house == null: house = building
+		if building.definition.id == "farm" and farm == null: farm = building
+	house.tier = 2
+	sim.step(1)
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	await process_frame
+	check(hud.faction_chips.has("union") and hud.faction_chips.has("populist"), "Union and populist chips appear when they arrive")
+	for id in ["gentry","union","middle"]:
+		sim.factions.coffers[id] = int(sim.factions.coffers[id]) + 1000
+		sim.outside_money += 1000
+	await _click(hud.faction_chips.gentry.get_global_rect().get_center())
+	check(hud.factions_menu.visible and hud.blocks_mouse(hud.factions_menu.get_global_rect().get_center()), "A chip opens the Factions panel, which blocks the world behind it")
+	check("Crown" in hud.power_legend.get_parsed_text() and "Unaligned" in hud.power_legend.get_parsed_text() and hud.power_segments.has("crown"), "The panel shows the power bar")
+	check("Aristocrats" in hud.faction_text.get_parsed_text() and "Favour" in hud.faction_text.get_parsed_text(), "The panel lists each faction's favour")
+	var bid := _offer(sim,"gentry","bid")
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	await process_frame
+	check(not bid.is_empty() and hud.offer_buttons.has("gentry"), "An open offer shows as a card")
+	if hud.offer_buttons.has("gentry"):
+		await _click(hud.offer_buttons.gentry.accept.get_global_rect().get_center())
+		check(sim.buildings[int(bid.uid)].owner == "gentry" and sim.factions.offers.gentry.is_empty(), "Accept sells the building through real input")
+	var pledge := _offer(sim,"middle","pledge")
+	var favour: int = sim.factions.favour.middle
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	await process_frame
+	if not pledge.is_empty() and hud.offer_buttons.has("middle"):
+		await _click(hud.offer_buttons.middle.decline.get_global_rect().get_center())
+	check(not pledge.is_empty() and sim.factions.offers.middle.is_empty() and sim.factions.favour.middle == favour - 5, "Decline closes an offer through real input")
+	sim.set_tax_percent(15)
+	var cap := _offer(sim,"union","pledge","tax_cap")
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	await process_frame
+	if not cap.is_empty() and hud.offer_buttons.has("union"):
+		await _click(hud.offer_buttons.union.accept.get_global_rect().get_center())
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	await process_frame
+	check(sim.tax_percent == 10 and sim.factions.pledges.union.size() == 1 and hud.pledge_buttons.has("union:tax_cap"), "Accepting a tax cap pledges it and lists it with a Break button")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/factions-panel.png")
+	await _click(hud.treasury_button.get_global_rect().get_center())
+	await process_frame
+	check(hud.treasury_menu.visible and not hud.factions_menu.visible, "Treasury and Factions panels are exclusive")
+	check(hud.tax_lock.get_parent().visible and "Trade unions" in hud.tax_lock.text and hud.tax_buttons[Economy.TAX_STEP].disabled, "A pledged lever shows a padlock and the faction's name")
+	await _click(hud.tax_buttons[Economy.TAX_STEP].get_global_rect().get_center())
+	check(sim.tax_percent == 10, "A padlocked lever refuses changes")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/treasury-pledged.png")
+	await _key(KEY_ESCAPE)
+	await _click(hud.faction_chips.union.get_global_rect().get_center())
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	await process_frame
+	if hud.pledge_buttons.has("union:tax_cap"):
+		await _click(hud.pledge_buttons["union:tax_cap"].get_global_rect().get_center())
+	check(sim.factions.pledges.union.is_empty() and sim.factions.blocked_until.union > sim.tick and sim.set_tax_percent(20), "Break pledge frees the lever through real input")
+	sim.set_tax_percent(15)
+	await _key(KEY_ESCAPE)
+	check(not hud.factions_menu.visible, "Escape closes the Factions panel")
+	await _click_cell(farm.cell)
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	check(view.selected_uid == farm.uid and hud.sale_button.visible and "The Crown" in hud.inspector.get_parsed_text(), "A Crown field shows its owner and Offer for sale")
+	await _click(hud.sale_button.get_global_rect().get_center())
+	await process_frame
+	check(hud.sale_list.visible and hud.sale_buttons.has("gentry"), "Offer for sale lists the buyers' bids")
+	if hud.sale_buttons.has("gentry"):
+		await _click(hud.sale_buttons.gentry.get_global_rect().get_center())
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	check(farm.owner == "gentry" and not hud.sale_button.visible and "Aristocrats" in hud.inspector.get_parsed_text(), "The sale button sells through real input")
+	await _click_cell(house.cell)
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	check(view.selected_uid == house.uid and "Working class" in hud.inspector.get_parsed_text() and "rent" in hud.inspector.get_parsed_text(), "A Villager house shows its class, alignment and landlord")
+	await _key(KEY_ESCAPE)
+	# A union hall and a union house, so the overlay has reach and colour to show.
+	var unlocked: int = sim.unlocked_tier
+	sim.unlocked_tier = maxi(unlocked,2)
+	var hall = null
+	for cell in [_cell(18,23),_cell(21,23),_cell(21,16),_cell(18,16)]:
+		if sim.placement_error("union_hall",cell).is_empty() and sim.place("union_hall",cell):
+			hall = sim.buildings[sim.next_uid - 1]
+			break
+	# The build menu checks after this expect Villager buildings still locked.
+	sim.unlocked_tier = unlocked
+	house.aligned = "union"
+	await _click(hud.cog_button.get_global_rect().get_center())
+	await _click(hud.class_overlay_button.get_global_rect().get_center())
+	check(hall != null and view.class_root.get_child_count() > 4, "The overlay draws houses and the hall's reach (%d markers)" % view.class_root.get_child_count())
+	check("Unaligned working class" in hud.class_legend_text.get_parsed_text(), "The class overlay key names its colours")
+	check(view.class_root.visible and view.class_root.get_child_count() > 0 and hud.class_legend.visible and hud.class_overlay_button.button_pressed, "The options toggle shows the class overlay and its key")
+	await _key(KEY_ESCAPE)
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/class-overlay.png")
+	await _key(KEY_F5)
+	check(not view.class_root.visible and not hud.class_legend.visible and not hud.class_overlay_button.button_pressed, "F5 hides the class overlay")
+
+## Opens one of the faction's candidate offers by type (and pledge), or {}.
+func _offer(sim, id: String, type: String, pledge: String = "") -> Dictionary:
+	for offer in sim.factions.candidates(sim,id):
+		if offer.type == type and (pledge.is_empty() or offer.get("pledge","") == pledge):
+			offer["expires"] = sim.tick + 600
+			sim.factions.offers[id] = offer
+			return offer
+	return {}
 
 func _click_cell(cell: Vector2i) -> void:
 	var local: Vector2 = view.camera.unproject_position(Vector3(cell.x+0.5,0,cell.y+0.5))

@@ -71,10 +71,22 @@ func _price(sim, good: String, visiting: Array) -> int:
 	prices[good] = ceili(float(inputs_cost) / float(units)) + int(labour[good])
 	return prices[good]
 
+## The chain price of a good, or for a category need (staple, fuel) the
+## cheapest good that meets it.
+func need_price(sim, need: String) -> int:
+	if prices.has(need):
+		return int(prices[need])
+	var best := -1
+	for good in sim.db.need_goods(need):
+		if best < 0 or int(prices[good]) < best:
+			best = int(prices[good])
+	return maxi(0, best)
+
 ## What a storehouse charges households: the chain price plus the markup,
-## never less than 1 s more (so cheap goods such as water keep a margin).
+## never less than 1 s more (so cheap goods such as water keep a margin). A
+## category need is priced at its cheapest good.
 func retail_price(sim, good: String) -> int:
-	var price := int(prices[good])
+	var price := need_price(sim, good)
 	if sim.markup_percent == 0:
 		return price
 	return price + maxi(1, (price * sim.markup_percent + 50) / 100)

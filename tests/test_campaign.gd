@@ -199,6 +199,10 @@ func _legacy_restore(t) -> void:
 	# live village's ledger cleared, both start from the same defaults.
 	sim.ledger = []
 	sim.period = Economy.blank_period()
+	# Nor does it hold favour: the migrated village founds its factions afresh,
+	# neutral, while the live one has drifted since its first payday.
+	for id in sim.factions.favour:
+		sim.factions.favour[id] = 0
 	var sim_state := Campaign._state(sim)
 	for key in ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger"]:
 		sim_state.erase(key)

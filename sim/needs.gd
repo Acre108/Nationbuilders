@@ -22,10 +22,17 @@ func update(sim, house) -> void:
 				house.happiness_history.pop_front()
 		house.needs_met = {}
 		house.needs_next_tick = sim.tick + int(row.consume_every_ticks)
-	for good in consumption:
-		if not house.needs_met.has(good) and house.input.take(good, int(consumption[good])):
-			house.needs_met[good] = true
-			sim.consumed[good] = int(sim.consumed.get(good, 0)) + int(consumption[good])
+	# A need names a good or a goods category; the pantry's first good that
+	# meets it, in goods.json order, is eaten.
+	for need in consumption:
+		if house.needs_met.has(need):
+			continue
+		var amount := int(consumption[need])
+		for good in sim.db.need_goods(need):
+			if house.input.take(good, amount):
+				house.needs_met[need] = true
+				sim.consumed[good] = int(sim.consumed.get(good, 0)) + amount
+				break
 	# A service need (a chapel) is met while a staffed provider is in range.
 	var services := counted_services(row)
 	for service in services:
@@ -54,8 +61,11 @@ func update(sim, house) -> void:
 	else:
 		house.satisfied_ticks = 0
 		# Storehouses charge households a markup, so judge against that price.
-		var unaffordable: bool = sim.db.goods.has(house.missing_need) and sim.spendable(house) < sim.economy.retail_price(sim, house.missing_need)
-		house.status = ("cannot afford " if unaffordable else "missing ") + house.missing_need
+		var need: String = house.missing_need
+		var eaten: bool = consumption.has(need)
+		var unaffordable: bool = eaten and sim.spendable(house) < sim.economy.retail_price(sim, need)
+		var label: String = sim.db.need_name(need).to_lower() if eaten and not sim.db.goods.has(need) else need
+		house.status = ("cannot afford " if unaffordable else "missing ") + label
 	# One missing good is survivable: a house demotes only when its settled
 	# happiness stays below the tier's threshold for the downgrade time.
 	if unhappy(sim, house):
