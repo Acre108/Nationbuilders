@@ -257,6 +257,11 @@ func _check_treasury() -> void:
 		await _click(view.hud.tax_buttons[-Economy.TAX_STEP].get_global_rect().get_center())
 	check(sim.tax_percent == 0 and view.hud.tax_buttons[-Economy.TAX_STEP].disabled, "Treasury panel lowers tax to zero, then stops")
 	sim.set_tax_percent(tax)
+	var markup: int = sim.markup_percent
+	await _click(view.hud.markup_buttons[Economy.TAX_STEP].get_global_rect().get_center())
+	check(sim.markup_percent == markup + Economy.TAX_STEP and view.hud.markup_value.text == "%d%%" % sim.markup_percent, "Treasury panel raises the storehouse markup through real input")
+	await _click(view.hud.markup_buttons[-Economy.TAX_STEP].get_global_rect().get_center())
+	check(sim.markup_percent == markup, "Treasury panel lowers the storehouse markup")
 	var free: int = Economy.free_gold(sim)
 	await _click(view.hud.reserve_buttons.public[Economy.SILVER_PER_GOLD].get_global_rect().get_center())
 	check(sim.public_reserve == mini(Economy.SILVER_PER_GOLD,free) and view.hud.treasury_values.public.text == Economy.format(sim.public_reserve), "Treasury panel sets gold aside for public pay")

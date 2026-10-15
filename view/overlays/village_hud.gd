@@ -8,6 +8,7 @@ signal rotation_requested
 signal deposits_toggled
 signal inspection_closed
 signal workers_toggled
+signal priority_selected(level: int)
 signal speed_selected(speed: int)
 signal restart_requested
 signal weather_selected(kind: AtmosphereProfile.Weather, intensity: float)
@@ -24,6 +25,8 @@ signal campaign_charter_requested
 signal site_overview_requested
 signal run_choice_selected(choice: String)
 signal tax_selected(percent: int)
+signal markup_selected(percent: int)
+signal reserve_target_toggled(enabled: bool)
 signal reserve_transfer_requested(pot: String, amount: int)
 ## Gold counter (top left), the one global counter on the play screen. It
 ## opens the Treasury panel: reserves, tax and the payday ledger.
@@ -37,9 +40,12 @@ var close_treasury_button: Button
 var treasury_total: Label
 var treasury_values: Dictionary = {}
 var reserve_buttons: Dictionary = {}
+var keep_reserve_button: CheckButton
 var tax_value: Label
 var tax_buttons: Dictionary = {}
 var markup_value: Label
+var markup_buttons: Dictionary = {}
+var shown_markup := Economy.DEFAULT_MARKUP_PERCENT
 var treasury_ledger: RichTextLabel
 var shown_tax := Economy.DEFAULT_TAX_PERCENT
 ## The village last refreshed, so the Treasury panel fills as soon as it opens.
@@ -62,6 +68,9 @@ var inspector_title: Label
 var close_inspector: Button
 var inspection_progress: ProgressBar
 var workers_button: Button
+## Labour priority for the selected workplace (or storehouse carriers): 0 low, 1 normal, 2 high.
+var priority_row: HBoxContainer
+var priority_buttons: Dictionary = {}
 var build_buttons: Dictionary = {}
 var demolish_button: Button
 var deposits_button: Button
@@ -238,6 +247,20 @@ func _ready() -> void:
 	workers_button.tooltip_text = "Release this building's workers to other jobs"
 	workers_button.pressed.connect(func(): workers_toggled.emit())
 	info.add_child(workers_button)
+	priority_row = HBoxContainer.new()
+	priority_row.add_theme_constant_override("separation",6)
+	info.add_child(priority_row)
+	var priority_label := _label("Priority",14)
+	priority_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	priority_row.add_child(priority_label)
+	for entry in [["Low",0],["Normal",1],["High",2]]:
+		var button := _button(entry[0])
+		button.toggle_mode = true
+		button.add_theme_font_size_override("font_size",13)
+		button.tooltip_text = "Workers fill high-priority jobs first, then normal, then low"
+		button.pressed.connect(func(): priority_selected.emit(entry[1]))
+		priority_buttons[entry[1]] = button
+		priority_row.add_child(button)
 	cog_button =_icon_button("res://view/overlays/cog.svg","Options")
 	cog_button.pressed.connect(_toggle_options_menu)
 	root.add_child(cog_button)
@@ -423,12 +446,22 @@ func _build_treasury_menu() -> void:
 		var row := _treasury_row(column,entry[1],entry[2],buttons,func(amount): reserve_transfer_requested.emit(entry[0],amount))
 		treasury_values[entry[0]] = row[0]
 		if not row[1].is_empty(): reserve_buttons[entry[0]] = row[1]
+	keep_reserve_button = CheckButton.new()
+	keep_reserve_button.text = "Keep %d paydays of services reserved" % Economy.SERVICE_RESERVE_PAYDAYS
+	keep_reserve_button.focus_mode = Control.FOCUS_NONE
+	keep_reserve_button.add_theme_font_size_override("font_size",14)
+	keep_reserve_button.tooltip_text = "At each payday, top the public pay reserve up from free gold"
+	keep_reserve_button.toggled.connect(func(enabled): reserve_target_toggled.emit(enabled))
+	column.add_child(keep_reserve_button)
 	column.add_child(HSeparator.new())
 	var tax_row := _treasury_row(column,"Tax on wages","Withheld from household wages at payday",[["−%d%%" % Economy.TAX_STEP,-Economy.TAX_STEP],["+%d%%" % Economy.TAX_STEP,Economy.TAX_STEP]],
 		func(step): tax_selected.emit(clampi(shown_tax + step,0,Economy.MAX_TAX_PERCENT)))
 	tax_value = tax_row[0]
 	tax_buttons = tax_row[1]
-	markup_value = _treasury_row(column,"Storehouse markup","Households pay this above the chain price when they buy from a storehouse; producers sell direct at the chain price",[],Callable())[0]
+	var markup_row := _treasury_row(column,"Storehouse markup","Households pay this above the chain price when they buy from a storehouse; it pays the carriers. Producers sell direct at the chain price",[["−%d%%" % Economy.TAX_STEP,-Economy.TAX_STEP],["+%d%%" % Economy.TAX_STEP,Economy.TAX_STEP]],
+		func(step): markup_selected.emit(clampi(shown_markup + step,0,Economy.MAX_MARKUP_PERCENT)))
+	markup_value = markup_row[0]
+	markup_buttons = markup_row[1]
 	column.add_child(HSeparator.new())
 	treasury_ledger = RichTextLabel.new()
 	treasury_ledger.bbcode_enabled = true
@@ -497,6 +530,7 @@ func _refresh_treasury(sim) -> void:
 	treasury_values.free.text = Economy.format(free)
 	treasury_values.public.text = Economy.format(sim.public_reserve)
 	treasury_values.capital.text = Economy.format(sim.capital_reserve)
+	keep_reserve_button.set_pressed_no_signal(sim.keep_service_reserve)
 	for pot in reserve_buttons:
 		reserve_buttons[pot][-Economy.SILVER_PER_GOLD].disabled = int(sim.get(pot + "_reserve")) == 0
 		reserve_buttons[pot][Economy.SILVER_PER_GOLD].disabled = free == 0
@@ -504,6 +538,9 @@ func _refresh_treasury(sim) -> void:
 	tax_buttons[-Economy.TAX_STEP].disabled = sim.tax_percent <= 0
 	tax_buttons[Economy.TAX_STEP].disabled = sim.tax_percent >= Economy.MAX_TAX_PERCENT
 	markup_value.text = "%d%%" % sim.markup_percent
+	shown_markup = sim.markup_percent
+	markup_buttons[-Economy.TAX_STEP].disabled = sim.markup_percent <= 0
+	markup_buttons[Economy.TAX_STEP].disabled = sim.markup_percent >= Economy.MAX_MARKUP_PERCENT
 	var text := _treasury_ledger_text(sim)
 	if treasury_ledger.text != text:
 		treasury_ledger.text = text
@@ -1065,6 +1102,10 @@ func _refresh_inspection(sim, building) -> void:
 	inspection_progress.visible = false
 	workers_button.visible = int(row.workers) > 0
 	workers_button.text = "Stop workers" if building.workers_enabled else "Resume workers"
+	# Storehouses set their carriers' priority; other workplaces their own.
+	priority_row.visible = int(row.workers) > 0 or row.kind == "storehouse"
+	for level in priority_buttons:
+		priority_buttons[level].set_pressed_no_signal(int(building.get("priority")) == level)
 	match row.kind:
 		"producer":
 			var assigned := int(row.workers) if building.staffed else 0
@@ -1077,7 +1118,7 @@ func _refresh_inspection(sim, building) -> void:
 				text += "Mature tree → 1 log; leaves a stump\n" if row.forest_action == "cut" else "Plants saplings; trees mature in 60 s\nKeeps the village clearing open\n"
 				if building.work_cell.x >= 0:
 					text += "[b]Working at[/b]  (%d, %d)\n" % [building.work_cell.x,building.work_cell.y]
-			else:
+			elif not (row.inputs.is_empty() and row.outputs.is_empty()):
 				text += "[b]Recipe[/b]\n%s → %s\n" % [_goods(row.inputs,sim.db),_goods(row.outputs,sim.db)]
 				text += "[b]Input[/b]  %d / %d\n%s\n" % [building.input.total(),building.input.capacity,_slot_goods(building.input,row.inputs,sim.db)]
 			if not row.outputs.is_empty():
@@ -1093,6 +1134,8 @@ func _refresh_inspection(sim, building) -> void:
 					text += "[b]Last payday[/b]  %s\n" % (Economy.format(building.last_wage) if building.last_wage >= due else "[color=#d98c6f]%s of %s: working unpaid[/color]" % [Economy.format(building.last_wage),Economy.format(due)])
 				if building.frustration > 0:
 					text += "[b]Frustration[/b]  [color=#d98c6f]%d unpaid worker-paydays[/color]\n" % building.frustration
+				if row.has("provides"):
+					text += "[b]Serves[/b]  %d houses within %d road tiles%s\n" % [sim.served_houses(building),int(row.service_radius),"" if building.staffed else " [color=#d98c6f](needs its worker)[/color]"]
 			text += "[b]Cycle[/b]  %.1f / %.1f s" % [building.progress/10.0,float(row.cycle_ticks)/10.0]
 			inspection_progress.visible = true
 			inspection_progress.max_value = float(row.cycle_ticks)
@@ -1100,7 +1143,7 @@ func _refresh_inspection(sim, building) -> void:
 		"house":
 			var tier: Dictionary = sim.db.tiers[building.tier]
 			text += "[b]Tier %d[/b]  %s\n[b]Workers provided[/b]  %d\n\n" % [building.tier,tier.name,int(tier.workers_per_house)]
-			text += "[b]Happiness[/b]  %d%%  ·  %d of %d needs met this cycle\n" % [building.happiness,building.needs_met.size(),tier.consumption.size()]
+			text += "[b]Happiness[/b]  %d%%  ·  %d of %d needs met this cycle\n" % [building.happiness,building.needs_met.size(),tier.consumption.size() + Needs.counted_services(tier).size()]
 			var settled: int = Needs.settled(building)
 			text += "[b]Settled[/b]  %s\n\n" % ("after the first full cycle" if settled < 0 else "%d%%  ·  last %d cycles" % [settled,building.happiness_history.size()])
 			text += "[b]Needs[/b]  every %.0f s\n%s\n" % [float(tier.consume_every_ticks)/10.0,_needs_text(building,tier.consumption,sim)]
@@ -1145,6 +1188,14 @@ func _goods(items: Dictionary, db) -> String:
 		parts.append("%d %s" % [int(items[good]),db.goods[good].name])
 	return ", ".join(parts)
 
+## Tier names whose houses need this service, e.g. "Villagers".
+func _tiers_needing(sim, service: String) -> String:
+	var names: Array = []
+	for id in sim.db.tiers:
+		if service in sim.db.tiers[id].get("services", []):
+			names.append(sim.db.tiers[id].name)
+	return " and ".join(names) if not names.is_empty() else "no"
+
 func _needs_text(house, consumption: Dictionary, sim) -> String:
 	var parts: Array[String] = []
 	for good in consumption:
@@ -1153,6 +1204,10 @@ func _needs_text(house, consumption: Dictionary, sim) -> String:
 		var retail: int = sim.economy.retail_price(sim,good)
 		var price_text := Economy.format(sim.price(good)) if retail == sim.price(good) else "%s, %s stored" % [Economy.format(sim.price(good)),Economy.format(retail)]
 		parts.append("[color=#%s]%d %s (%s)[/color]" % [colour,int(consumption[good]),sim.db.goods[good].name,price_text])
+	# Service needs, such as a chapel, are met by a staffed provider in range.
+	for service in Needs.counted_services(sim.db.tiers[house.tier]):
+		var colour := "a8c38a" if house.needs_met.has(service) else "d98c6f"
+		parts.append("[color=#%s]%s nearby[/color]" % [colour,str(service).capitalize()])
 	return ", ".join(parts)
 
 func _slot_goods(storage, recipe: Dictionary, db) -> String:
@@ -1179,6 +1234,8 @@ func _refresh_placement(sim, row: Dictionary, rotation_quarters: int = 0) -> voi
 		lines.append("[b]Workers[/b]  %d" % int(row.workers))
 	if Economy.is_public(row):
 		lines.append("[b]Public service[/b]  upkeep %s per payday from the treasury" % Economy.format(Economy.upkeep(row)))
+	if row.has("provides"):
+		lines.append("[b]Serves[/b]  houses within %d road tiles: a %s need" % [int(row.service_radius),_tiers_needing(sim,str(row.provides))])
 	match row.kind:
 		"producer":
 			if row.has("forest_action"):

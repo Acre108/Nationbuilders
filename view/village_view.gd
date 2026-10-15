@@ -138,8 +138,11 @@ func _ready() -> void:
 	hud.weather_action.connect(_weather_action)
 	hud.world_map_requested.connect(open_world_map)
 	hud.workers_toggled.connect(_toggle_workers)
-	hud.tax_selected.connect(func(percent): _treasury_command(sim.set_tax_percent(percent)))
-	hud.reserve_transfer_requested.connect(func(pot,amount): _treasury_command(sim.transfer_reserve(pot,amount)))
+	hud.priority_selected.connect(func(level): _panel_command(sim.set_priority(selected_uid, level)))
+	hud.tax_selected.connect(func(percent): _panel_command(sim.set_tax_percent(percent)))
+	hud.markup_selected.connect(func(percent): _panel_command(sim.set_markup_percent(percent)))
+	hud.reserve_target_toggled.connect(func(enabled): _panel_command(sim.set_keep_service_reserve(enabled)))
+	hud.reserve_transfer_requested.connect(func(pot,amount): _panel_command(sim.transfer_reserve(pot,amount)))
 	hud.inspection_closed.connect(func():
 		selected_uid = -1
 		hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
@@ -524,8 +527,8 @@ func _apply_preview_material(node: Node, preview_material: Material) -> void:
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for child in node.get_children(): _apply_preview_material(child, preview_material)
 
-## Treasury panel commands (tax, reserve transfers) go through the sim's public API.
-func _treasury_command(ok: bool) -> void:
+## HUD panel commands (tax, markup, reserves, priority) go through the sim's public API.
+func _panel_command(ok: bool) -> void:
 	if not ok: hud.show_error(sim.last_error)
 	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
 

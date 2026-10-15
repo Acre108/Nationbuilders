@@ -10,6 +10,7 @@ const SeededRNG = preload("res://sim/rng.gd")
 const Needs = preload("res://sim/needs.gd")
 const Forestry = preload("res://sim/forestry.gd")
 const Economy = preload("res://sim/economy.gd")
+const Factions = preload("res://sim/factions.gd")
 const TICKS_PER_SECOND := 10
 const CARRIER_STEP_TICKS := 2
 ## Carriers keep each house pantry stocked for this many consumption cycles.
@@ -22,6 +23,8 @@ var site
 var grid
 var needs = Needs.new()
 var economy = Economy.new()
+## The factions present and their coffers; see factions.gd.
+var factions = Factions.new()
 var buildings: Dictionary = {}
 var carriers: Array = []
 var reserve = Storage.new(300)
@@ -36,9 +39,15 @@ var treasury := Economy.FOUNDING_TREASURY
 var public_reserve := 0
 var capital_reserve := 0
 var payroll := 0
+## Silver brought from outside by arriving factions' endowments. Treasury,
+## payroll, buildings' silver and faction coffers sum to FOUNDING_TREASURY
+## plus this.
+var outside_money := 0
 var tax_percent := Economy.DEFAULT_TAX_PERCENT
 ## Storehouses charge households this much above the chain price.
 var markup_percent := Economy.DEFAULT_MARKUP_PERCENT
+## Top the public pay reserve up to a few paydays of services at each payday.
+var keep_service_reserve := false
 var taxes_collected := 0
 ## Worker-paydays public workers went unpaid, village-wide. Kept for the trade
 ## union's contentedness once factions exist.
@@ -83,6 +92,7 @@ func _init(seed_value: int = 73, content = null, site_package = null) -> void:
 	reserve.add("berries", 36)
 	if valid:
 		economy.setup(self)
+		factions.found(self)
 
 func placement_error(building_id: String, cell: Vector2i, rotation_quarters: int = 0) -> String:
 	if not valid:
@@ -136,6 +146,10 @@ func place(building_id: String, cell: Vector2i, rotation_quarters: int = 0) -> b
 	# The treasury gives the new building its working money.
 	building.silver = capital
 	Economy.spend_on_construction(self, capital)
+	# A union hall or alehouse belongs to its faction from the start, or passes
+	# to it when the faction arrives.
+	if row.kind == "hall":
+		building.owner = factions.hall_owner(row)
 	next_uid += 1
 	buildings[building.uid] = building
 	for tile in building.cells():
@@ -213,8 +227,13 @@ func demolish(cell: Vector2i) -> bool:
 	for storage in [building.input, building.output, building.inventory]:
 		for good in storage.items:
 			destroyed[good] = int(destroyed.get(good, 0)) + storage.count(good)
-	# A demolished building's silver returns to the treasury.
-	Economy.refund(self, building.silver)
+	# A demolished building's silver returns to the treasury, or a faction-owned
+	# workshop's or storehouse's purse to its owner. A rented house's savings
+	# are the household's, not the landlord's (FACTIONS.md §3).
+	if building.definition.kind != "house" and factions.present(building.owner):
+		factions.credit(building.owner, building.silver, "")
+	else:
+		Economy.refund(self, building.silver)
 	for tile in building.cells():
 		grid.occupied.erase(tile)
 	buildings.erase(building.uid)
@@ -240,6 +259,43 @@ func set_workers_enabled(uid: int, enabled: bool) -> bool:
 	building.workers_enabled = enabled
 	return true
 
+## Sells a Crown building to a faction listed in its row's `buyers`, at
+## factions.sale_price(): book value × the favour multiplier (FACTIONS.md §5.1).
+## The faction pays the treasury from its coffers and becomes the owner. A
+## workshop's or storehouse's purse stays in the building and now counts as the
+## faction's. Services and wells are never sold.
+func sell_building(uid: int, faction: String) -> bool:
+	last_error = ""
+	var building = buildings.get(uid)
+	if building == null:
+		last_error = "Unknown building"
+		return false
+	var row: Dictionary = building.definition
+	if not factions.present(faction):
+		last_error = "No %s in the village" % (db.factions[faction].name if db.factions.has(faction) else faction)
+		return false
+	var buyer: String = db.factions[faction].name
+	if not Building.ownable(row, db):
+		last_error = "%s is not for sale" % row.name
+		return false
+	if not building.owner.is_empty():
+		last_error = "%s already belongs to the %s" % [row.name, db.factions[building.owner].name]
+		return false
+	if faction not in row.get("buyers", []):
+		last_error = "The %s do not buy a %s" % [buyer, row.name]
+		return false
+	var price_due: int = factions.sale_price(self, building, faction)
+	if int(factions.coffers[faction]) < price_due:
+		last_error = "The %s cannot pay %s" % [buyer, Economy.format(price_due)]
+		return false
+	factions.coffers[faction] = int(factions.coffers[faction]) - price_due
+	treasury += price_due
+	period.deals += price_due
+	building.owner = faction
+	building.owner_work = 0
+	events.append(Factions.BUILDING_SOLD % [buyer, row.name, Economy.format(price_due), tick])
+	return true
+
 func step(ticks: int = 1) -> void:
 	if not valid:
 		push_error("Cannot step invalid content")
@@ -253,36 +309,44 @@ func step(ticks: int = 1) -> void:
 		# advance on s of every 100 ticks, spread evenly.
 		var speed: int = Needs.work_speed(Needs.morale(self))
 		var working: bool = (tick * speed) / 100 != ((tick - 1) * speed) / 100
-		var workers := workforce()
+		idle_workers = _staff(workforce())
 		for building in buildings.values():
-			var required := int(building.definition.workers)
-			building.staffed = building.workers_enabled and required <= workers
-			if building.staffed:
-				workers -= required
 			if building.definition.kind == "producer":
 				if working:
 					_produce(building)
 			elif building.definition.kind == "storehouse":
 				building.status = "connected" if not grid.access(building).is_empty() else "no road"
-		idle_workers = _staff_carriers(workers)
 		for carrier in carriers:
 			_update_carrier(carrier)
 		for building in buildings.values():
 			if building.definition.kind == "house":
 				needs.update(self, building)
+		factions.update(self)
 		if tick % PAYDAY_TICKS == 0:
 			economy.payday(self)
 
-## Carriers are jobs too. After buildings are staffed, each storehouse's
-## carriers take idle workers, in placement order, up to its carrier count.
-## Carriers already on a trip count first so they can finish it; the rest of
-## the crew goes to idle carriers in order. Off-shift carriers wait at home.
-## Returns the workers still idle.
-func _staff_carriers(workers: int) -> int:
+## Staffs workplaces and carriers by priority: high, then normal, then low.
+## Within a level, buildings take their whole crews in placement order, then
+## that level's storehouses put carriers on shift (carriers are jobs too), up
+## to their carrier count. Carriers already on a trip count first so they can
+## finish it; the rest of a crew goes to idle carriers in order. Off-shift
+## carriers wait at home. Returns the workers still idle.
+func _staff(workers: int) -> int:
 	var shifts: Dictionary = {}
-	for building in buildings.values():
-		if building.definition.kind == "storehouse":
-			building.crew = mini(int(building.definition.carriers), workers)
+	for level in [Building.HIGH, Building.NORMAL, Building.LOW]:
+		for building in buildings.values():
+			# Halls have no jobs, so they are never staffed.
+			if building.priority != level or building.definition.kind in ["storehouse", "hall"]:
+				continue
+			var required := int(building.definition.workers)
+			building.staffed = building.workers_enabled and required <= workers
+			if building.staffed:
+				workers -= required
+		for building in buildings.values():
+			if building.priority != level or building.definition.kind != "storehouse":
+				continue
+			building.staffed = building.workers_enabled
+			building.crew = mini(int(building.definition.carriers), workers) if building.workers_enabled else 0
 			workers -= building.crew
 			shifts[building.uid] = building.crew
 	for busy in [true, false]:
@@ -302,6 +366,30 @@ func set_tax_percent(percent: int) -> bool:
 		last_error = "Tax must be between 0 and %d percent" % Economy.MAX_TAX_PERCENT
 		return false
 	tax_percent = percent
+	return true
+
+## Sets a workplace's labour priority (Building.LOW, NORMAL or HIGH). For a
+## storehouse it ranks its carriers.
+func set_priority(uid: int, level: int) -> bool:
+	last_error = ""
+	var building = buildings.get(uid)
+	if building == null:
+		last_error = "Unknown building"
+		return false
+	if int(building.definition.workers) == 0 and building.definition.kind != "storehouse":
+		last_error = "%s has no workers" % building.definition.name
+		return false
+	if level < Building.LOW or level > Building.HIGH:
+		last_error = "Priority must be low, normal or high"
+		return false
+	building.priority = level
+	return true
+
+## Keeps SERVICE_RESERVE_PAYDAYS of services' upkeep in the public pay
+## reserve, topped up from free gold at each payday.
+func set_keep_service_reserve(enabled: bool) -> bool:
+	last_error = ""
+	keep_service_reserve = enabled
 	return true
 
 ## Sets how much above the chain price storehouses charge households.
@@ -629,6 +717,27 @@ func nearest_store(building):
 			distance = cells
 	return nearest
 
+## Whether a staffed building providing this service (a chapel) is within its
+## service radius of the house, by road.
+func serves(house, service: String) -> bool:
+	for building in buildings.values():
+		var row: Dictionary = building.definition
+		if row.get("provides") == service and building.staffed:
+			var cells: int = grid.distance(building, house)
+			if cells >= 0 and cells <= int(row.service_radius):
+				return true
+	return false
+
+## Houses a service building covers, for its inspector.
+func served_houses(building) -> int:
+	var count := 0
+	for house in buildings.values():
+		if house.definition.kind == "house":
+			var cells: int = grid.distance(building, house)
+			if cells >= 0 and cells <= int(building.definition.get("service_radius", 0)):
+				count += 1
+	return count
+
 func workforce() -> int:
 	var result := 4 # Founding adults; additional workers are counted per house.
 	for building in buildings.values():
@@ -667,7 +776,7 @@ func snapshot() -> Dictionary:
 		carrier_states.append(carrier.snapshot())
 	for cell in grid.roads:
 		road_cells.append([cell.x, cell.y])
-	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"public_reserve":public_reserve,"capital_reserve":capital_reserve,"payroll":payroll,"tax_percent":tax_percent,"markup_percent":markup_percent,"taxes_collected":taxes_collected,"public_frustration":public_frustration,"period":period.duplicate(),"ledger":ledger.duplicate(true),"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"site":_site_snapshot()}
+	return {"tick":tick,"rng":rng.state,"unlocked_tier":unlocked_tier,"idle_workers":idle_workers,"treasury":treasury,"public_reserve":public_reserve,"capital_reserve":capital_reserve,"payroll":payroll,"outside_money":outside_money,"factions":factions.snapshot(),"tax_percent":tax_percent,"markup_percent":markup_percent,"keep_service_reserve":keep_service_reserve,"taxes_collected":taxes_collected,"public_frustration":public_frustration,"period":period.duplicate(),"ledger":ledger.duplicate(true),"next_uid":next_uid,"next_carrier_uid":next_carrier_uid,"width":grid.width,"height":grid.height,"terrain":grid.terrain.duplicate(),"levels":Array(grid.levels),"ramps":Array(grid.ramps),"reach":Array(grid.reach),"deposits":grid.deposits.duplicate(),"roads":road_cells,"revision":grid.revision,"forest_revision":grid.forest_revision,"trees":_forest_cells(grid.trees),"saplings":_forest_cells(grid.saplings),"stumps":_forest_cells(grid.stumps),"buildings":building_states,"carriers":carrier_states,"reserve":reserve.items.duplicate(),"produced":produced.duplicate(),"consumed":consumed.duplicate(),"destroyed":destroyed.duplicate(),"events":events.duplicate(),"site":_site_snapshot()}
 
 func _site_snapshot() -> Dictionary:
 	var state := {}
@@ -702,8 +811,10 @@ static func from_snapshot(state: Dictionary, content = null):
 		if expected[key] is int:
 			if not Building._whole(state[key]) or (key != "rng" and state[key] < 0): return null
 		elif typeof(state[key]) != typeof(expected[key]): return null
-		if key in ["tick","unlocked_tier","idle_workers","treasury","public_reserve","capital_reserve","payroll","tax_percent","markup_percent","taxes_collected","public_frustration","next_uid","next_carrier_uid"]:
+		if key in ["tick","unlocked_tier","idle_workers","treasury","public_reserve","capital_reserve","payroll","tax_percent","markup_percent","taxes_collected","public_frustration","outside_money","next_uid","next_carrier_uid"]:
 			result.set(key, int(state[key]))
+		elif key == "keep_service_reserve":
+			result.keep_service_reserve = state[key]
 	if not result.db.tiers.has(result.unlocked_tier) or result.tax_percent > Economy.MAX_TAX_PERCENT or result.markup_percent > Economy.MAX_MARKUP_PERCENT: return null
 	if result.public_reserve + result.capital_reserve > result.treasury: return null
 	if state.ledger.size() > Economy.LEDGER_PAYDAYS or not _valid_period(state.period): return null
@@ -756,11 +867,18 @@ static func from_snapshot(state: Dictionary, content = null):
 	for event in state.events:
 		if not event is String: return null
 	result.events.assign(state.events)
+	if not result.factions.restore(state.factions, result.db): return null
 	result.rng.state = int(state.rng)
 	for entry in state.buildings:
 		if not entry is Dictionary: return null
 		var building = Building.from_snapshot(entry, result.db)
 		if building == null or result.buildings.has(building.uid) or building.uid >= result.next_uid: return null
+		# Owners and alignments name factions present in the village.
+		for faction in [building.owner, building.aligned, building.pull_leader]:
+			if not faction.is_empty() and not result.factions.present(faction): return null
+		# Alignment and a streak are for a recruiting faction of the house's
+		# class, and a streak that reached its length would already have acted.
+		if not result.factions.contest_state_valid(result, building): return null
 		for cell in building.cells():
 			if not result.grid.in_reach(cell) or result.grid.occupied.has(cell) or result.grid.roads.has(cell): return null
 			result.grid.occupied[cell] = building.uid

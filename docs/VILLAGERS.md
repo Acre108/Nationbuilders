@@ -21,6 +21,11 @@ Villagers are still counted per house, as in [DESIGN.md](DESIGN.md). Individual 
 
 This lets the player direct labour when there is not enough of it. For example, stop the woodcutter to staff the bakery, or to put more carriers on shift.
 
+**Labour priority** (decided 15 October 2026). Each workplace, and each storehouse for its carriers, has a priority: low, normal (the default) or high, set in the inspector (`set_priority(uid, level)`).
+- Workers fill high-priority jobs first, then normal, then low.
+- Within a level, buildings are staffed in placement order before that level's carriers. So with every building at normal, carriers still come after buildings.
+- A high-priority storehouse keeps its carriers on shift ahead of normal workplaces.
+
 ## 2. Food reaches houses by carrier
 
 - Each house has a **pantry**: its six-slot `input` storage.
@@ -37,7 +42,13 @@ Distance now matters for housing. A house far from its supply waits longer for e
 - Each consumption cycle (`consume_every_ticks`), a house tries to eat each need on its own, from its pantry.
 - A need missing at the start of the cycle still counts if it arrives before the cycle ends.
 - **Happiness = needs met this cycle ÷ needs of the tier**, as a percentage. A Villager house with water and bread but no logs is at 67%.
-- Shelter is not counted, since every house has it. Services such as the chapel will count as needs once they exist.
+- Shelter is not counted, since every house has it.
+- **Service needs** (15 October 2026). A tier can need a service, listed in its `services` in `tiers.json`. Villagers need a **chapel**.
+  - The need is met while a staffed building that `provides` it is within its `service_radius` (20 tiles for a chapel) of the house by road.
+  - It counts like a good, so a Villager house has four needs. With water, bread and logs but no chapel, it is at 75%.
+  - The chapel is a public service: the treasury pays its priest (5.2). It unlocks with Villagers and costs 12 logs.
+  - Its inspector shows how many houses it serves.
+  - Content validation requires every tier service to be provided by some building.
 
 ### 3.1 What happiness does
 
@@ -88,7 +99,7 @@ Here `WAGE` is 10 silver per worker per payday, and a payday is 200 ticks. Each 
 | Logs | Woodcutter | – | 7 s | **7 s** |
 | Flour | Windmill | 4 s wheat | 5 s | **9 s** |
 | Bread | Bakery | 9 s flour + 2 s water | 5 s | **16 s** |
-| Berries | nobody | – | – | **2 s** (base `price` in `goods.json`) |
+| Berries | Berry bushes | – | 2 s | **2 s** |
 
 Prices are worked out from `buildings.json` when the sim starts. A good that no building makes needs a `price` in `goods.json`, and content validation enforces this.
 
@@ -98,7 +109,7 @@ Prices are worked out from `buildings.json` when the sim starts. A good that no 
   - A workshop's purse therefore stays level, and a half-idle bakery never goes broke.
   - Wages follow what the village actually sells. Goods nobody buys earn no one anything.
 - **Payday** (every 20 s) shares the payroll between houses by the workers each provides. Spare silver rotates between houses.
-- **Tax** is withheld at payday into the treasury: 10% of wages by default, set in the Treasury panel (5.1). Tax and storehouse surpluses (5.3) are the treasury's income.
+- **Tax** is withheld at payday into the treasury: 15% of wages by default (raised from 10% on 15 October 2026; see 5.5), set in the Treasury panel (5.1). Tax and storehouse surpluses (5.3) are the treasury's income.
 - **Public services.** Buildings marked `"service": true` in `buildings.json` (the forester so far) sell nothing. The treasury pays their workers at each payday: 10 s per worker, from the public pay reserve first (5.2). Unpaid public workers keep working, and their frustration grows. Content validation requires every producer that sells nothing to be a service.
 
 ### Spending
@@ -152,7 +163,7 @@ The rules live in [sim/economy.gd](../sim/economy.gd). The panel is in [view/ove
 - Clicking it opens the **Treasury panel**:
   - the treasury in gold, split into free gold and the two reserves (5.2), with −1 g / +1 g transfer buttons;
   - **tax on wages**, with − and + in steps of 5%, from 0 to 50% (`set_tax_percent`);
-  - the storehouse markup (5.3), shown but not yet adjustable;
+  - the **storehouse markup** (5.3), with − and + in steps of 5%;
   - **last payday**: tax, storehouse surplus, demolition refunds, public pay and construction, plus any public wages left unpaid;
   - **net per payday** for the last 6 paydays, newest first;
   - construction spent since the last payday;
@@ -174,7 +185,8 @@ The rules live in [sim/economy.gd](../sim/economy.gd). The panel is in [view/ove
   - the building's `frustration`, shown in its inspector;
   - the village's `public_frustration`, shown in the Treasury panel. This village-wide count survives demolition. A faction system will later read it as trade union contentedness.
 - A partly paid crew counts each worker whose wage was not covered. Frustration does not decay yet. When it should is a faction-system question.
-- Not built yet: automatic allocation of tax income to reserves, and reserve targets ("keep 2 paydays of public pay").
+- **Reserve target.** "Keep 2 paydays of services reserved" in the Treasury panel (`set_keep_service_reserve`) tops the public pay reserve up from free gold at each payday, to twice the services' upkeep. It runs after taxes, so new income funds it first. Off by default.
+- Not built: automatic allocation of a share of income to the capital reserve.
 
 ### 5.3 Storehouse markup and purse cap
 
@@ -190,7 +202,7 @@ The rules live in [sim/economy.gd](../sim/economy.gd). The panel is in [view/ove
   - the silver needed to restock, up to the per-good `good_limit`, every good the village currently makes.
 
   A storehouse with empty shelves therefore keeps construction money and spends it on producers' output. A full storehouse passes its surplus to the treasury.
-- The markup can be changed in the sim (`set_markup_percent`, 0–100%), but not yet from the HUD.
+- The player sets the markup in the Treasury panel (`set_markup_percent`, 0–100%, in steps of 5%).
 
 ### 5.4 Saves
 
@@ -212,6 +224,14 @@ What changed:
 - **The markup no longer drains households.** It comes back as carrier wages, so only tax leaves them. The two-house village that went broke by minute 90 now holds its savings.
 - **Tax against services is now the balance.** With no service, tax slowly moves all money to the treasury. With one forester and two houses, 15% tax balances it. That is the Treasury panel's job, and the panel shows unpaid services.
 - **Demotion is gentler.** A missing good costs morale and speed, not the tier.
+
+**Playtest, 15 October 2026** (`tools/playtest_village.gd`, real input only, seed 73, 3× speed, 15% tax, 10% markup). The bot plays from the playable start through the toolbar, the build menu, map clicks, the inspector and the Treasury panel.
+- It plants berry bushes and a forester, reaches Villagers at 0:22, builds a mill, bakery and chapel, gets first bread at 0:36, and adds a second house.
+- Both houses are 100% happy (settled 100%) from minute 1 to minute 13. All 6 carriers stay on shift, and the chapel serves both houses.
+- **Logs run out at about minute 14.** The forester was placed beside the village and reports "no planting space nearby" all game, because it keeps the clearing open. So the woodcutter runs out of trees. One house misses logs (75%), morale drops to 83%, and workplaces slow to 91%. The forester's placement card does not warn about this.
+- **The treasury drains** from 3.84 g to 0.28 g in 15 minutes. The forester and chapel cost 20 s a payday, more than two houses' tax at 15%. Households save about 4.6 g each. The panel's "Net per payday" shows −10 to −12 s throughout. The player's levers are more houses, a higher tax, or dropping a service.
+- **The bakery bakes to order.** It reads "missing input flour" with an empty purse while the storehouse holds 30 flour, but bread stock stayed at 5–19.
+- The playtest found and fixed two inspector bugs: the house counted "4 of 3 needs", and the chapel showed an empty recipe.
 
 **Earlier results, before carriers were paid** (14 October 2026). Hour-long headless soaks, seed 73 (`tools/soak_village.gd`, with the storehouse `good_limit` of 30):
 
@@ -247,19 +267,20 @@ What this shows:
 
 `tests/run_view_tests.gd` (`_check_treasury`) drives the gold counter, tax buttons and reserve buttons through real input. `tests/test_campaign.gd` checks that version-one saves without these fields still load.
 
-### 5.6 Still open
+### 5.6 Settled and still open
 
-- **Should the player set the markup** next to the tax rate? It is shown read-only for now.
-- **Default tax.** At 10%, a village with one forester runs its treasury dry. With two houses and a forester, 15% balances it. Should the default rise, or is finding the balance the player's job?
-- More services. The forester is the first; a chapel (a Villager need in DESIGN.md) is the obvious second.
-- Settled on 14 October 2026: the margin pays carriers, and the treasury spends on services (5.3, section 4).
-- **Automatic allocation and reserve targets** (5.2).
-- **When frustration decays**, and what the trade union does with it.
+Settled:
+- 14 October 2026: the margin pays carriers, and the treasury spends on services (5.3, section 4).
+- 15 October 2026: the player sets the markup (5.3), the default tax is 15% (5.5), the chapel is the second service (section 3), and a public pay reserve target exists (5.2).
+- **When frustration decays** is left to factions. Union favour reads unpaid workers over the last 6 paydays, and `public_frustration` stays as a lifetime record ([FACTIONS.md](FACTIONS.md) §7).
+
+Still open:
+- Automatic allocation of a share of income to the capital reserve.
 
 ## 6. Open questions
 
 1. **What should happiness do?** Settled on 14 October 2026: it sets the demotion threshold and workplace speed (3.1). Not chosen: scaling the workers a house provides; faction problems will take that role.
-2. **Should needs have weights?** At the moment water counts the same as logs. Survival needs (water, staple food) might count for more than tier goods.
-3. **Labour priority.** On/off is the first step. A per-building priority (high / normal / low) may be needed once villages have 20+ buildings.
-4. **Pantry size by tier.** Six slots fit three goods at two cycles each. Tier 3, with four or more goods, will need a larger pantry or a single cycle of stock.
-5. **Treasury growth.** With one house, taxes add about 0.03 g a minute, and a new house costs 0.92 g. More houses widen the tax base. Storehouse surpluses (5.3) now add a second income; see 5.5 for how the two balance against public pay. A higher default tax, or a gold cost on later buildings, may still be needed once Tier 3 exists.
+2. **Should needs have weights?** At the moment water counts the same as logs, and a chapel the same as bread. Survival needs (water, staple food) might count for more than tier goods. Left until Tier 3 adds more needs.
+3. **Labour priority.** Settled on 15 October 2026: low, normal and high per workplace and per storehouse's carriers (section 1).
+4. **Pantry size by tier.** Six slots fit three goods at two cycles each. Service needs such as the chapel take no pantry space. Tier 3, with four or more goods, will need a larger pantry or a single cycle of stock.
+5. **Treasury growth.** With one house, taxes add about 0.03 g a minute, and a new house costs 0.92 g. More houses widen the tax base. At the 15% default, two houses pay for one public service (5.5). Each service adds 10 s a payday per worker, so every new chapel or forester needs roughly one more Tier 2 house. A gold cost on later buildings may still be needed once Tier 3 exists.

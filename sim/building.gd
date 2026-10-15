@@ -14,6 +14,12 @@ var work_cell := Vector2i(-1,-1)
 var staffed := false
 ## Player switch: a stopped building releases its workers and receives no inputs.
 var workers_enabled := true
+## Labour priority: workers fill HIGH jobs first, then NORMAL, then LOW. A
+## storehouse's priority applies to its carriers.
+const LOW := 0
+const NORMAL := 1
+const HIGH := 2
+var priority := NORMAL
 var status := "idle"
 var tier := 1
 var satisfied_ticks := 0
@@ -41,6 +47,20 @@ var frustration := 0
 ## Wages this building has passed to the payroll: a producer's labour, or a
 ## storehouse's markup paid to its carriers.
 var wages_paid := 0
+## The faction that owns this building ("" for the Crown), and for a house the
+## faction its household belongs to ("" while unaligned). See docs/FACTIONS.md.
+var owner := ""
+var aligned := ""
+## Labour or markup this building has sold since its owner bought it. The
+## owner's share is a percentage of this running total, paid in whole silver as
+## it accrues, so small sales still add up to the full share.
+var owner_work := 0
+## The contest for a working-class house (docs/FACTIONS.md §3.1): the
+## recruiting faction whose pull has led by enough at each payday in a row, and
+## for how many paydays. For an unaligned house it is the side it may join; for
+## a member, the rival it may leave for. "" and 0 while no side leads.
+var pull_leader := ""
+var pull_streak := 0
 
 func _init(number: int, row: Dictionary, at: Vector2i, orientation: int = 0) -> void:
 	uid = number
@@ -67,7 +87,12 @@ func cells() -> Array[Vector2i]:
 	return result
 
 func snapshot() -> Dictionary:
-	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"happiness_history":happiness_history.duplicate(),"crew":crew,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration,"wages_paid":wages_paid}
+	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"priority":priority,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"happiness_history":happiness_history.duplicate(),"crew":crew,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration,"wages_paid":wages_paid,"owner":owner,"aligned":aligned,"owner_work":owner_work,"pull_leader":pull_leader,"pull_streak":pull_streak}
+
+## Whether a faction may own a building of this row: never a service, a well
+## or a road (docs/FACTIONS.md §5.1).
+static func ownable(row: Dictionary, content) -> bool:
+	return row.get("kind") in content.OWNABLE_KINDS and not bool(row.get("service", false)) and row.get("id") not in content.COMMON
 
 static func from_snapshot(state: Dictionary, content):
 	if not content.buildings.has(state.get("id")) or not _point(state.get("cell")) or not _point(state.get("work_cell")):
@@ -84,7 +109,15 @@ static func from_snapshot(state: Dictionary, content):
 		elif typeof(state[key]) != typeof(expected[key]): return null
 		if key not in ["uid","id","cell","work_cell","input","output","inventory"]:
 			result.set(key, int(state[key]) if expected[key] is int else state[key].duplicate(true) if state[key] is Dictionary else state[key])
-	if not content.tiers.has(result.tier) or result.rotation_quarters > 3: return null
+	if not content.tiers.has(result.tier) or result.rotation_quarters > 3 or result.priority > HIGH: return null
+	# An owner is a known faction on a building it may own; only houses align.
+	if not result.owner.is_empty() and (not content.factions.has(result.owner) or not ownable(result.definition, content)): return null
+	if not result.aligned.is_empty() and (not content.factions.has(result.aligned) or result.definition.kind != "house"): return null
+	# A hall belongs to the Crown until its faction arrives, then to that faction.
+	if result.definition.kind == "hall" and result.owner not in ["", result.definition.recruits_for]: return null
+	# A streak names a recruiting faction other than the house's own; no leader, no streak.
+	if result.pull_leader.is_empty() != (result.pull_streak == 0): return null
+	if not result.pull_leader.is_empty() and (result.definition.kind != "house" or result.pull_leader == result.aligned or not content.factions.has(result.pull_leader) or content.factions[result.pull_leader].get("recruits") != true): return null
 	if state.happiness_history.size() > HAPPINESS_CYCLES: return null
 	result.happiness_history = []
 	for value in state.happiness_history:

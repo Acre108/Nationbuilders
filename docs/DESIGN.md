@@ -4,7 +4,7 @@ Condensed from the full prototype proposal. This is the reference for anyone bui
 
 ## Pitch
 
-Hearthlands is a light but challenging town builder. Each 60–90 minute session founds one village on a hard site. The village can fail; every village that succeeds permanently joins a growing nation. Each village has a culture and pledges to a political faction. Each nation turn, patrols and expeditions turn wilderness into civilised land. Over many sessions the nation grows from the medieval age to the modern age.
+Hearthlands is a light but challenging town builder. Each 60–90 minute session founds one village on a hard site. The village can fail; every village that succeeds permanently joins a growing nation. Inside each village, class factions compete for its money and influence, and the strongest at charter carries its weight into the nation. Each nation turn, patrols and expeditions turn wilderness into civilised land. Over many sessions the nation grows from the medieval age to the modern age.
 
 ## Pillars (use these to decide what to cut)
 
@@ -17,7 +17,7 @@ Hearthlands is a light but challenging town builder. Each 60–90 minute session
 ## Core loop
 
 - **Village run (real time).** Found the village (pick the site and culture) → survive and grow (winters, raids, needs tiers) → build its specialty around the unique resource → charter it, or fail into a ruin.
-- **Nation turn (one per run).** Goods flow along roads → factions react (power, demands) → threats resolve (raids against patrols and defences) → companies tame the wild (scout, patrol, expedition) → choose the next site.
+- **Nation turn (one per run).** Goods flow along roads → factions make demands, weighted by their national power → threats resolve (raids against patrols and defences) → companies tame the wild (scout, patrol, expedition) → choose the next site.
 
 ## Village layer
 
@@ -32,7 +32,7 @@ Hearthlands is a light but challenging town builder. Each 60–90 minute session
 
 - **Chains.** 6–10 chains per age, each 2–4 links. Carriers move goods between buildings and storehouses, so roads and storehouse placement are the spatial puzzle.
 - **Pressure.** Seasons drain food and fuel. Events strike (fire, plague, blight, beast attacks). Frontier sites get raids.
-- **Charter.** Available once the village reaches Tier 3 with an export depot running. The player picks a role (Producer, Garrison or Market) and the village pledges to its culture's faction.
+- **Charter.** Available once the village reaches Tier 3 with an export depot running. The player picks a role (Producer, Garrison or Market). The charter records the village's dominant faction, and its faction power shares add to the nation's totals.
 - **Failure.** A village fails when population reaches 0, it is overrun, or morale collapses for a full season. It becomes a ruin, which can be resettled later with a bonus.
 
 ## Nation layer
@@ -44,15 +44,22 @@ Hearthlands is a light but challenging town builder. Each 60–90 minute session
 - **Military.** 3–6 companies. Each company gets one order per turn: Scout, Patrol, Expedition, Escort or Garrison. Odds are shown before committing, the order auto-resolves, and the result appears on an event card.
 - **Threats.** Raids travel predictable routes. Each raid's strength is compared against defence coverage plus any patrol on the route; a lost raid sends the node into decline.
 
-## Cultures and factions
+## Factions
 
-| Culture | Thrives on | Faction | Faction wants |
-| --- | --- | --- | --- |
-| Highland clans | Hills, passes, frontier | Clan Council | Expansion, expeditions, castles |
-| River folk | Rivers, coast, trade | Merchant League | Roads, ports, safe trade |
-| Abbey settlers | Farmland, heartland | The Church | Abbeys, tithes, limits on war |
+Six factions in three classes compete inside every settlement. [FACTIONS.md](FACTIONS.md) has the full design.
 
-Each chartered village adds to its faction's power. Powerful factions make demands; meeting them raises favour, ignoring them causes unrest.
+| Class | Factions | They want |
+| --- | --- | --- |
+| Working class | **Trade unions** · **Populists** | Wages and jobs · cheap bread, order and tradition |
+| Middle class | **Middle class** | Shops, a healthy markup, order |
+| Elite | **Industrialists** · **Aristocrats** · **Cultural elite** | Workshops and cheap labour · land, rent and woodland · schools and a free press |
+
+- **Power** is a faction's share of the settlement's silver: its coffers, its households' savings and the property it owns.
+- **Favour** toward the player follows the levers, deals and pledges. Factions pay the treasury for property and pledges.
+- **Villages** get the unions and populists with the first Villager house. The site decides which of the middle class, industrialists and aristocrats also take an interest, from none to three. Towns have all six. The cultural elite is a town faction.
+- **Nation.** At charter, the dominant faction is recorded and the settlement's power shares add to the nation's totals. National power drives faction demands each nation turn.
+
+*Changed 15 Oct 2026:* the culture factions (Clan Council, Merchant League, the Church) are replaced by these class factions. Cultures (Highland clans, River folk, Abbey settlers) may stay as regional flavour, but they no longer decide factions.
 
 ## Art direction
 
@@ -65,7 +72,7 @@ Stylised low-poly 3D, rendered smoothly at full display resolution with antialia
 - Godot 4 with GDScript.
 - The simulation is plain code that never touches nodes and is driven by data files. Content (buildings, goods, chains, tiers) lives in JSON under `data/`.
 - Randomness is deterministic and seeded.
-- Village and nation simulations meet at one contract: a *site package* goes into a run (terrain, deposits, imports, threat, culture) and a *charter result* comes out (role, export bundle, faction, or ruin).
+- Village and nation simulations meet at one contract: a *site package* goes into a run (terrain, deposits, imports, threat, culture) and a *charter result* comes out (role, export bundle, dominant faction and power shares, or ruin).
 - A headless test harness checks that every chain completes and that a scripted build reaches Tier 3.
 
 ## Milestone gates

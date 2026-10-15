@@ -426,8 +426,11 @@ static func _state(object) -> Dictionary:
 	return result
 
 ## Village and building fields added after version one; older saves keep the
-## new fields' defaults (no reserves, default markup, no frustration).
-const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration","happiness_history","crew","wages_paid"]
+## new fields' defaults (no reserves, default markup, no frustration, every
+## building the Crown's and every house unaligned, with no pull streak). The
+## village is founded again on load, so its site's factions arrive with their
+## endowments as outside money.
+const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration","happiness_history","crew","wages_paid","outside_money","factions","priority","keep_service_reserve","owner","aligned","owner_work","pull_leader","pull_streak"]
 
 static func _restore(object, state: Dictionary) -> bool:
 	var expected := _state(object)
@@ -456,6 +459,6 @@ static func _hash(bytes: PackedByteArray) -> String:
 
 static func _content_hash() -> String:
 	var bytes := PackedByteArray()
-	for filename in ["world", "biomes", "deposits", "buildings", "goods", "tiers"]:
+	for filename in ["world", "biomes", "deposits", "buildings", "goods", "tiers", "factions"]:
 		bytes.append_array(FileAccess.get_file_as_bytes("res://data/" + filename + ".json"))
 	return _hash(bytes)

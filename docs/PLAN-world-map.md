@@ -210,7 +210,7 @@ The real rules (Tier 3, export depot, morale, raids) replace these triggers late
   - Fine dark surface borders keep hexes readable beneath the linked scenery.
 - **Village hex markers:**
   - *active*: a few roofs with a red banner;
-  - *chartered*: a larger cluster with a coloured banner, later the faction colour;
+  - *chartered*: a larger cluster with a coloured banner, later the colour of the settlement's dominant faction ([FACTIONS.md](FACTIONS.md) §9);
   - *ruin*: grey broken walls;
   - *abandoned*: the ruin marker, dimmer.
   - A village's reach is outlined.

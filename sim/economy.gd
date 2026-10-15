@@ -8,13 +8,15 @@ extends RefCounted
 ## tax on wages and by storehouse surpluses above that cap, and spends gold on
 ## construction and public services. The player can set part of it aside: a
 ## public pay reserve and a capital reserve, each closed to the other's spending.
-## Money is closed: treasury, payroll and every building's silver always sum to
-## the founding treasury. Reserves are part of the treasury, not extra money.
+## Money is closed: treasury, payroll, every building's silver and every
+## faction's coffers always sum to the founding treasury plus the outside money
+## arriving factions brought (factions.gd). Reserves are part of the treasury,
+## not extra money.
 const SILVER_PER_GOLD := 100
 ## One worker's labour for one payday, in silver.
 const WAGE := 10
 const FOUNDING_TREASURY := 1000
-const DEFAULT_TAX_PERCENT := 10
+const DEFAULT_TAX_PERCENT := 15
 ## The player sets tax in these steps, up to this limit.
 const TAX_STEP := 5
 const MAX_TAX_PERCENT := 50
@@ -27,9 +29,13 @@ const STOREHOUSE_CAPITAL := 100
 ## A storehouse keeps trading silver up to this cap; the rest goes to the
 ## treasury at payday.
 const PURSE_CAP := 2 * STOREHOUSE_CAPITAL
-## Treasury income and spending per payday, for the Treasury panel.
-const LEDGER_KEYS := ["tax","trade","refunds","public_pay","construction","unpaid"]
+## Treasury income and spending per payday, for the Treasury panel. Deals are
+## silver factions paid the treasury, such as for a building sold to them.
+const LEDGER_KEYS := ["tax","trade","refunds","public_pay","construction","unpaid","deals"]
 const LEDGER_PAYDAYS := 6
+## "Keep services reserved" tops the public pay reserve up to this many
+## paydays of the services' upkeep.
+const SERVICE_RESERVE_PAYDAYS := 2
 
 ## Derived from content: unit price, and the labour part of it, per good.
 var prices: Dictionary = {}
@@ -171,7 +177,8 @@ func spendable(sim, building) -> int:
 ## The buyer pays the seller on delivery. A producer passes the labour part of
 ## its price to the payroll and keeps the rest to buy its next inputs. A
 ## storehouse keeps the chain price, which restocks it, and passes a
-## household's markup to the payroll as its carriers' wages.
+## household's markup to the payroll as its carriers' wages. A faction-owned
+## seller first gives its owner's share of that labour or markup to the owner.
 func settle(sim, buyer, seller_uid: int, good: String) -> void:
 	var seller = sim.buildings.get(seller_uid)
 	if seller == null or seller == buyer:
@@ -185,15 +192,18 @@ func settle(sim, buyer, seller_uid: int, good: String) -> void:
 		work = mini(int(labour[good]), cost)
 	elif seller.definition.kind == "storehouse":
 		work = cost - int(prices[good])
-	sim.payroll += work
-	seller.wages_paid += work
+	var share: int = sim.factions.take_owner_share(sim, seller, work)
+	sim.payroll += work - share
+	seller.wages_paid += work - share
 	seller.silver += cost - work
 
-## At payday, storehouse surpluses above the purse cap go to the treasury, and
+## At payday, storehouse surpluses above the purse cap go to the treasury, or
+## to the owner of a faction-owned storehouse, and
 ## the treasury pays public workers from the public pay reserve, then free gold.
 ## Unpaid public workers keep working, but each unpaid worker adds one to
 ## their frustration. The payroll is then shared between houses by the workers
-## each provides, and tax is withheld into the treasury.
+## each provides, and tax is withheld into the treasury. The factions' payday
+## runs last, before the period joins the ledger.
 func payday(sim) -> void:
 	var period: Dictionary = sim.period
 	for building in sim.buildings.values():
@@ -203,8 +213,11 @@ func payday(sim) -> void:
 		if building.silver > cap:
 			var surplus: int = building.silver - cap
 			building.silver = cap
-			sim.treasury += surplus
-			period.trade += surplus
+			if sim.factions.present(building.owner):
+				sim.factions.credit(building.owner, surplus, "owner_share")
+			else:
+				sim.treasury += surplus
+				period.trade += surplus
 	for building in sim.buildings.values():
 		if not building.staffed or not is_public(building.definition):
 			continue
@@ -221,6 +234,8 @@ func payday(sim) -> void:
 			sim.public_frustration += unpaid_workers
 			period.unpaid += due - paid
 	_pay_households(sim)
+	_top_up_service_reserve(sim)
+	sim.factions.payday(sim)
 	sim.ledger.append(period)
 	while sim.ledger.size() > LEDGER_PAYDAYS:
 		sim.ledger.pop_front()
@@ -263,3 +278,15 @@ static func format(silver: int) -> String:
 	if gold == 0:
 		return "%d s" % rest
 	return "%d g" % gold if rest == 0 else "%d g %d s" % [gold, rest]
+
+## When the player keeps services reserved, the public pay reserve is topped
+## up from free gold to SERVICE_RESERVE_PAYDAYS of the services' upkeep. It
+## runs after taxes, so a payday's income funds it first.
+static func _top_up_service_reserve(sim) -> void:
+	if not sim.keep_service_reserve:
+		return
+	var upkeep_due := 0
+	for building in sim.buildings.values():
+		upkeep_due += upkeep(building.definition)
+	var short: int = SERVICE_RESERVE_PAYDAYS * upkeep_due - sim.public_reserve
+	sim.public_reserve += clampi(short, 0, free_gold(sim))

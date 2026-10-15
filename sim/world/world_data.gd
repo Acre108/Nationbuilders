@@ -2,6 +2,7 @@ extends RefCounted
 ## Validated world-generation data: data/world.json, biomes.json, deposits.json.
 ## Mirrors ContentDB: load_directory() reads files, validate() checks rows and
 ## collects every problem in `errors` instead of stopping at the first.
+## factions.json is read only to check the factions each biome interests.
 ## Biome ids the generator's classification rules assign (docs/PLAN-world-map.md §4.2).
 const RULE_BIOMES := ["ocean", "peaks", "mountain_pass", "tundra", "marsh", "highland_hills", "coast", "riverland", "heartland"]
 const DEPOSIT_CLASSES := ["core", "uncommon", "rare"]
@@ -12,11 +13,12 @@ const WORLD_INTEGERS := ["generator_version", "columns", "rows", "stream_flow", 
 var world: Dictionary = {}
 var biomes: Dictionary = {}
 var deposits: Dictionary = {}
+var factions: Dictionary = {}
 var errors: Array[String] = []
 
 func load_directory(path: String = "res://data") -> bool:
 	var rows: Array = []
-	for filename in ["world.json", "biomes.json", "deposits.json"]:
+	for filename in ["world.json", "biomes.json", "deposits.json", "factions.json"]:
 		var file := FileAccess.open(path.path_join(filename), FileAccess.READ)
 		if file == null:
 			errors = ["Cannot open " + path.path_join(filename)]
@@ -28,16 +30,21 @@ func load_directory(path: String = "res://data") -> bool:
 			push_error(errors[0])
 			return false
 		rows.append(parser.data)
-	var valid := validate(rows[0], rows[1], rows[2])
+	var valid := validate(rows[0], rows[1], rows[2], rows[3])
 	if not valid:
 		push_error("World data validation failed: " + "; ".join(errors))
 	return valid
 
-func validate(world_row: Variant, biome_rows: Variant, deposit_rows: Variant) -> bool:
+## Without faction rows, biome faction ids are checked for shape only;
+## ContentDB validates the faction rows themselves.
+func validate(world_row: Variant, biome_rows: Variant, deposit_rows: Variant, faction_rows: Variant = null) -> bool:
 	errors.clear()
 	world = {}
 	biomes = {}
 	deposits = {}
+	factions = {}
+	if faction_rows != null:
+		_index(faction_rows, factions, "faction")
 	_validate_world(world_row)
 	_index(deposit_rows, deposits, "deposit")
 	for id in deposits:
@@ -54,7 +61,7 @@ func validate(world_row: Variant, biome_rows: Variant, deposit_rows: Variant) ->
 		if not biomes.has(id):
 			errors.append("missing biome " + id)
 	for id in biomes:
-		_validate_biome(id, biomes[id])
+		_validate_biome(id, biomes[id], faction_rows != null)
 	return errors.is_empty()
 
 func _validate_world(row: Variant) -> void:
@@ -86,8 +93,27 @@ func _validate_world(row: Variant) -> void:
 				break
 			previous = float(cut)
 
-func _validate_biome(id: String, row: Dictionary) -> void:
+func _validate_biome(id: String, row: Dictionary, check_factions: bool) -> void:
 	var prefix := "biome %s: " % id
+	# The middle and elite factions a village here interests (FACTIONS.md §8).
+	# The working-class factions arrive with their class, not with the site.
+	if not row.get("factions") is Array:
+		errors.append(prefix + "factions must be an array of faction ids")
+	else:
+		if row.get("settleable") == false and not row.factions.is_empty():
+			errors.append(prefix + "a biome that cannot be settled interests no factions")
+		var seen := {}
+		for faction in row.factions:
+			if not faction is String or seen.has(faction):
+				errors.append(prefix + "factions must be distinct faction ids")
+				continue
+			seen[faction] = true
+			if not check_factions:
+				continue
+			if not factions.has(faction):
+				errors.append(prefix + "unknown faction " + str(faction))
+			elif factions[faction].get("recruits") != false or "village" not in factions[faction].get("settlements", []):
+				errors.append(prefix + "faction %s cannot take an interest in a village site" % faction)
 	if not row.get("colour") is String or not Color.html_is_valid(row.colour):
 		errors.append(prefix + "colour must be a hex colour")
 	for key in ["settleable", "harsh"]:

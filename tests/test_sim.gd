@@ -3,6 +3,7 @@ const Sim = preload("res://sim/village_sim.gd")
 const Scenario = preload("res://sim/scenario.gd")
 const Economy = preload("res://sim/economy.gd")
 const Needs = preload("res://sim/needs.gd")
+const Building = preload("res://sim/building.gd")
 
 func run(t) -> void:
 	_chain(t)
@@ -20,6 +21,8 @@ func run(t) -> void:
 	_carrier_jobs(t)
 	_services(t)
 	_happiness_effects(t)
+	_chapels_and_berries(t)
+	_priority_and_reserve(t)
 
 func _chain(t) -> void:
 	var sim = Sim.new(73)
@@ -33,6 +36,7 @@ func _chain(t) -> void:
 			break
 	t.check(upgrade_tick > 0, "Water and berries upgrade a Settler house")
 	t.check(Scenario.complete_chain(sim), "Upgrade unlocks mill and bakery")
+	t.check(_place_first(sim,"chapel",[Vector2i(13,21),Vector2i(25,15),Vector2i(14,15)]), "Upgrade unlocks a chapel for the Villagers' chapel need")
 	var first_bread := 0
 	var carried_goods: Dictionary = {}
 	for index in 3000:
@@ -47,7 +51,7 @@ func _chain(t) -> void:
 	for good in ["wheat","flour","bread","water","logs"]:
 		t.check(carried_goods.has(good), "Carriers visibly transport " + good)
 	var house = _find(sim, "house")
-	t.check(house.tier == 2 and house.needs_ok, "Bread, water and logs sustain Villagers")
+	t.check(house.tier == 2 and house.needs_ok, "Bread, water, logs and a chapel sustain Villagers")
 	t.check(house.happiness == 100, "A fully supplied house is fully happy")
 	t.check(house.input.count("berries") == 0 and house.input.count("bread") > 0, "Carriers clear Settler food from the pantry and stock bread")
 	_conservation(t, sim, "running chain")
@@ -238,7 +242,7 @@ func _money(t) -> void:
 	# Each stage costs its inputs plus its own labour, so longer chains cost more.
 	t.check(sim.price("flour") == sim.price("wheat") + int(sim.economy.labour.flour) and sim.price("bread") == sim.price("flour") + sim.price("water") + int(sim.economy.labour.bread), "A good costs its inputs plus its maker's labour")
 	t.check(sim.price("bread") > sim.price("flour") and sim.price("flour") > sim.price("wheat"), "Multistage goods cost more")
-	t.check(sim.price("berries") == int(sim.db.goods.berries.price), "A good no building makes uses its base price")
+	t.check(sim.price("berries") == int(sim.economy.labour.berries) and sim.price("berries") > 0, "Berries from berry bushes cost their pickers' labour")
 	t.check(Economy.format(1234) == "12 g 34 s" and Economy.format(57) == "57 s" and Economy.format(300) == "3 g", "100 silver make a gold")
 	# Construction is the treasury's spending: founding supplies are free, the
 	# rest is bought from storehouses, and new buildings get working money.
@@ -277,7 +281,10 @@ func _money(t) -> void:
 	chain.step(3000)
 	var house_two = _find(chain,"house")
 	t.check(chain.taxes_collected > 0 and house_two.last_tax == house_two.last_wage * chain.tax_percent / 100, "Tax on wages fills the treasury")
-	t.check(house_two.tier == 2 and house_two.needs_ok, "Wages from the chain keep a Villager house fed")
+	var fed := true
+	for good in chain.db.tiers[2].consumption:
+		fed = fed and house_two.needs_met.has(good)
+	t.check(house_two.tier == 2 and fed, "Wages from the chain keep a Villager house fed")
 	_conservation(t,chain,"priced chain")
 	# Payroll is shared between houses by the workers each provides.
 	t.check(chain.place("house",Vector2i(21,23)) or chain.place("house",Vector2i(15,15)), "Place a second household")
@@ -483,11 +490,11 @@ func _happiness_effects(t) -> void:
 	t.check(Needs.settled(house) == -1 and Needs.morale(sim) == 100, "Before a full cycle a house has no settled happiness and morale is full")
 	house.tier = 2
 	for index in 1500:
-		for good in ["water","bread"]:
+		for good in ["water","bread","logs"]:
 			if house.input.count(good) == 0: house.input.add(good)
 		sim.step(1)
-	t.check(house.tier == 2 and Needs.settled(house) == 66 and house.happiness_history.size() == 3, "One missing good leaves a house unhappy but not demoted: settled %d" % Needs.settled(house))
-	t.check(Needs.morale(sim) == 66, "Village morale is the houses' settled happiness")
+	t.check(house.tier == 2 and Needs.settled(house) == 75 and house.happiness_history.size() == 3 and not house.needs_met.has("chapel"), "One missing need (no chapel) leaves a house unhappy but not demoted: settled %d" % Needs.settled(house))
+	t.check(Needs.morale(sim) == 75, "Village morale is the houses' settled happiness")
 	for index in 2000:
 		if house.input.count("water") == 0: house.input.add("water")
 		sim.step(1)
@@ -504,6 +511,88 @@ func _happiness_effects(t) -> void:
 	fast.step(140)
 	slow.step(140)
 	t.check(Needs.morale(slow) == 0 and int(slow.produced.get("wheat",0)) * 2 == int(fast.produced.get("wheat",0)), "Workplaces at zero morale work at half speed: %d vs %d wheat" % [int(slow.produced.get("wheat",0)),int(fast.produced.get("wheat",0))])
+
+## Chapels are a service need: staffed chapels cover houses within their radius by road.
+func _chapels_and_berries(t) -> void:
+	var sim = _fixture()
+	var road: Array[Vector2i] = []
+	for x in range(12,27):
+		road.append(Vector2i(x,20))
+	sim.place_road(road)
+	sim.place("storehouse",Vector2i(12,21))
+	sim.place("house",Vector2i(20,21))
+	var house = _find(sim,"house")
+	t.check(not sim.place("chapel",Vector2i(24,21)) and sim.last_error.begins_with("Requires"), "Chapels unlock with Villagers")
+	t.check(sim.place("berry_bushes",Vector2i(16,21)), "Settlers can plant berry bushes")
+	sim.step(400)
+	t.check(int(sim.produced.get("berries",0)) > 0, "Berry bushes grow berries")
+	sim.unlocked_tier = 2
+	house.tier = 2
+	t.check(sim.place("chapel",Vector2i(24,21)), "Place a chapel near the house")
+	var chapel = _find(sim,"chapel")
+	sim.step(2)
+	t.check(sim.serves(house,"chapel") and house.needs_met.has("chapel") and sim.served_houses(chapel) == 1, "A staffed chapel in range meets the chapel need")
+	t.check(Economy.is_public(chapel.definition) and Economy.upkeep(chapel.definition) > 0, "The treasury pays the chapel's priest")
+	sim.set_workers_enabled(chapel.uid,false)
+	sim.step(1)
+	t.check(not sim.serves(house,"chapel"), "A chapel without its priest serves nobody")
+	sim.set_workers_enabled(chapel.uid,true)
+	sim.step(1)
+	# This sim's own content: shrink the radius below the road distance.
+	chapel.definition.service_radius = sim.grid.distance(chapel,house) - 1
+	t.check(not sim.serves(house,"chapel"), "A chapel beyond its radius serves nobody")
+	var db = preload("res://sim/content_db.gd").new()
+	db.load_directory()
+	var rows: Array = db.buildings.values().duplicate(true)
+	for row in rows:
+		if row.id == "chapel": row.erase("service_radius")
+	t.check(not db.validate(db.goods.values().duplicate(true),rows,db.tiers.values().duplicate(true)), "A providing service needs a radius")
+
+## Labour priority orders staffing; the service reserve target tops up public pay.
+func _priority_and_reserve(t) -> void:
+	var sim = _fixture()
+	for cell in [Vector2i(12,15),Vector2i(16,15),Vector2i(22,15)]:
+		sim.place("farm",cell)
+	var farms: Array = sim.buildings.values()
+	sim.step(1)
+	t.check(farms[0].staffed and farms[1].staffed and not farms[2].staffed, "Equal priorities staff in placement order")
+	t.check(sim.set_priority(farms[2].uid,Building.HIGH), "Raise a workplace's priority")
+	sim.step(1)
+	t.check(farms[2].staffed and farms[0].staffed and not farms[1].staffed, "A high-priority workplace is staffed first")
+	t.check(sim.set_priority(farms[0].uid,Building.LOW), "Lower a workplace's priority")
+	sim.step(1)
+	t.check(farms[1].staffed and not farms[0].staffed, "A low-priority workplace is staffed last")
+	t.check(not sim.set_priority(farms[0].uid,3) and not sim.set_priority(9999,Building.HIGH), "Priority must be a known level on a known building")
+	var road: Array[Vector2i] = []
+	for x in range(12,27):
+		road.append(Vector2i(x,20))
+	sim.place_road(road)
+	sim.place("storehouse",Vector2i(12,21))
+	var store = _find(sim,"storehouse")
+	sim.step(1)
+	t.check(store.crew == 0, "Normal-priority carriers come after every higher job")
+	t.check(sim.set_priority(store.uid,Building.HIGH), "A storehouse's priority ranks its carriers")
+	sim.step(1)
+	t.check(farms[2].staffed and store.crew == 2 and not farms[1].staffed, "High-priority carriers come after high workplaces but before normal ones")
+	t.check(not sim.set_priority(_find(sim,"storehouse").uid - 999,Building.LOW), "Unknown buildings have no priority")
+	# The service reserve target keeps two paydays of upkeep in public pay.
+	var town = _fixture()
+	town.place_road(road)
+	town.place("storehouse",Vector2i(12,21))
+	town.place("forester",Vector2i(15,21))
+	t.check(town.set_keep_service_reserve(true), "Keep services reserved")
+	town.step(town.PAYDAY_TICKS)
+	var upkeep: int = Economy.upkeep(town.db.buildings.forester)
+	t.check(town.public_reserve == Economy.SERVICE_RESERVE_PAYDAYS * upkeep, "Payday tops the public pay reserve up to two paydays of upkeep: %d" % town.public_reserve)
+	_money_conserved(t,town,"service reserve")
+	var restored = Sim.from_snapshot(town.snapshot())
+	t.check(restored != null and restored.keep_service_reserve, "The reserve setting survives a snapshot")
+
+func _place_first(sim, id: String, cells: Array) -> bool:
+	for cell in cells:
+		if sim.place(id, cell + Scenario.offset(sim)):
+			return true
+	return false
 
 func _to_payday(sim) -> void:
 	sim.step(sim.PAYDAY_TICKS - sim.tick % sim.PAYDAY_TICKS)
@@ -528,10 +617,12 @@ func _conservation(t, sim, label: String) -> void:
 	_money_conserved(t,sim,label)
 
 func _money_conserved(t, sim, label: String) -> void:
-	var money: int = sim.treasury + sim.payroll
+	# Arriving factions' endowments are outside money, held in their coffers.
+	var money: int = sim.treasury + sim.payroll + sim.factions.total()
 	for building in sim.buildings.values():
 		money += building.silver
-	t.check(money == Economy.FOUNDING_TREASURY, "%s conserves money: %d == %d" % [label,money,Economy.FOUNDING_TREASURY])
+	var expected: int = Economy.FOUNDING_TREASURY + sim.outside_money
+	t.check(money == expected, "%s conserves money: %d == %d" % [label,money,expected])
 	t.check(sim.public_reserve >= 0 and sim.capital_reserve >= 0 and sim.public_reserve + sim.capital_reserve <= sim.treasury, "%s keeps reserves inside the treasury" % label)
 
 ## Small archived flat layout for isolated logistics/placement fixtures.

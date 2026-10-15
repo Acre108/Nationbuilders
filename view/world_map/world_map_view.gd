@@ -435,6 +435,7 @@ func describe(coord: Vector2i) -> String:
 		lines.append("Deposits: " + (", ".join(names) if not names.is_empty() else "none known"))
 		if not info.scouted and not reveal_all:
 			lines.append("[color=#d9b45f]Unscouted[/color]: more may be hidden")
+		lines.append_array(_faction_lines(biome))
 	var blocked: String = provided_campaign.found_blocked(coord) if provided_campaign != null else world.found_blocked(coord)
 	if coord == world.start:
 		lines.append("[color=#e0a17d]Starting region[/color]")
@@ -452,6 +453,23 @@ func describe(coord: Vector2i) -> String:
 		elif blocked.is_empty(): lines.append("[color=#9fc27a]This ruin can be resettled[/color]")
 		else: lines.append("[color=#c98a7a]%s[/color]" % blocked)
 	return "\n".join(lines)
+
+## Who a village here would interest (FACTIONS.md §8): the biome picks the
+## middle and elite factions; the recruiting working-class factions come to
+## every village with its first Villager house.
+func _faction_lines(biome: Dictionary) -> Array[String]:
+	var interested: Array[String] = []
+	for id in biome.get("factions", []):
+		interested.append(data.factions[id].name if data.factions.has(id) else String(id))
+	var working: Array[String] = []
+	for id in data.factions:
+		var row: Dictionary = data.factions[id]
+		if row.get("recruits") == true and "village" in row.get("settlements", []):
+			working.append(row.name)
+	var lines: Array[String] = ["Interested factions: " + (", ".join(interested) if not interested.is_empty() else "none")]
+	if not working.is_empty():
+		lines.append("[color=#a9b39a]With the first Villagers: %s[/color]" % ", ".join(working))
+	return lines
 
 func _build_overlay() -> void:
 	var theme := Theme.new()

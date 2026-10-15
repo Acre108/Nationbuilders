@@ -65,7 +65,7 @@ Building ids, goods ids, `cycle_ticks`, `workers`, `unlock_tier` and `cost` use 
 | Mountain pass | Harsh | iron_vein 3, pasture 2 | coal_seam, silver_lode, salt | Little grass; no fertile soil |
 | Tundra | Harsh | fish_shoals 2, pasture 1 | trapline 5, amber_shore 4, sea_salt_flats 1 (ocean-edge sites only) | Fields at half speed; no fertile soil |
 
-Culture affinity follows [DESIGN.md](DESIGN.md): **Highland clans** favour hills and mountain passes, **River folk** favour riverland, coast and marsh, and **Abbey settlers** favour the heartland.
+Culture affinity follows [DESIGN.md](DESIGN.md): **Highland clans** favour hills and mountain passes, **River folk** favour riverland, coast and marsh, and **Abbey settlers** favour the heartland. Cultures are regional flavour only; they no longer decide factions ([FACTIONS.md](FACTIONS.md) §13).
 
 ## 3. Goods
 
@@ -285,7 +285,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 | --- | --- | --- | --- | --- | --- | --- |
 | dairy | Dairy | 2 milk + 1 salt → 2 cheese | 80 | 2 | grass | 3 |
 
-*Role:* woollens are cloth that frees fertile soil from flax. A Tier 3 village that has both fibres can replace its cottage and loom house with one weaving hall (see C7). Cheese is a staple and comfort the Church wants. Without salt, milk has no use, so a pasture village's surplus becomes a reason to trade.
+*Role:* woollens are cloth that frees fertile soil from flax. A Tier 3 village that has both fibres can replace its cottage and loom house with one weaving hall (see C7). Cheese is a staple and a comfort. Without salt, milk has no use, so a pasture village's surplus becomes a reason to trade.
 
 ### L5 · Fine cloth ★ `pasture` + `dye_meadow`
 | Id | Name | Recipe | Cycle | Workers | Site rule | Tier |
@@ -293,7 +293,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 | woad_garden | Woad garden | → 1 woad | 50 | 1 | on `dye_meadow` | 3 |
 | dyer | Dyer's yard | 1 woollens + 1 woad + 1 water → 1 fine_cloth | 90 | 2 | touches water | 3 |
 
-*Role:* high-value cloth and comfort good for the Merchant League. Heartland sites can roll both deposits. Elsewhere, woollens or woad must be imported.
+*Role:* high-value cloth and comfort good, and a luxury for elite households (FACTIONS.md §8). Heartland sites can roll both deposits. Elsewhere, woollens or woad must be imported.
 
 ### L6 · Apiary: candles and mead `flower_heath`
 | Id | Name | Recipe | Cycle | Workers | Site rule | Tier |
@@ -302,7 +302,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 | chandler | Chandler | 1 wax → 1 candles | 60 | 1 | grass | 2 |
 | meadery | Meadery | 2 honey + 1 water → 1 mead | 80 | 2 | grass | 3 |
 
-*Role:* one deposit, two branches. Candles light the chapel (comfort, Church demand). Mead replaces ale at the tavern and counts as a comfort, so an apiary village can skip barley entirely.
+*Role:* one deposit, two branches. Candles light the chapel (comfort). Mead replaces ale at the tavern and counts as a comfort, so an apiary village can skip barley entirely.
 
 ### L7 · Wine ★ `sunny_slope` + `oak_grove`
 | Id | Name | Recipe | Cycle | Workers | Site rule | Tier |
@@ -312,7 +312,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 | cooper | Cooper | 1 oak → 2 barrels | 60 | 1 | grass | 2 |
 | winery | Winery | 3 grapes + 1 barrels → 2 wine | 100 | 2 | grass | 3 |
 
-*Role:* the Abbey's prestige chain and the most valuable heartland export. Vineyards favour heartland and hills, and oak favours riverland and coast. Wine villages usually import barrels, which gives oak villages a good to sell even without vineyards.
+*Role:* the heartland's prestige chain and its most valuable export. Wine is also a luxury for elite households (FACTIONS.md §8). Vineyards favour heartland and hills, and oak favours riverland and coast. Wine villages usually import barrels, which gives oak villages a good to sell even without vineyards.
 
 ### L8 · Peat `peat_bog`
 | Id | Name | Recipe | Cycle | Workers | Site rule | Tier |
@@ -328,7 +328,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 | steelworks | Steelworks | 2 iron + 1 coal → 1 steel | 100 | 3 | grass/hill | 3 |
 | weaponsmith | Weaponsmith | 1 steel + 1 planks → 1 arms | 120 | 2 | grass/hill | 3 |
 
-*Role:* arms raise village defence against raids and are the Garrison charter's export. Clan Council favour. The surface-iron seam cannot sustain this chain; it needs a vein. Mountain passes can roll both deposits but have little timber for planks. Highland hills have iron but must import coal.
+*Role:* arms raise village defence against raids and are the Garrison charter's export. The surface-iron seam cannot sustain this chain; it needs a vein. Mountain passes can roll both deposits but have little timber for planks. Highland hills have iron but must import coal.
 
 ### L10 · Silver and jewellery ★ `silver_lode` + `amber_shore` (always needs imports)
 | Id | Name | Recipe | Cycle | Workers | Site rule | Tier |
@@ -347,7 +347,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 | fur_tannery | Fur tannery | 2 pelts + 1 salt → 2 furs | 80 | 2 | touches water | 2 |
 | furrier | Furrier | 1 furs + 1 **C** → 1 fur_cloak | 100 | 1 | grass | 3 |
 
-*Role:* fur cloaks count as cloth and give a cold-season bonus once seasons exist. Highland favour. Most tundra villages must import salt, so it is their lifeline import. A rare tundra site on an ocean shore with sea salt flats can make its own furs from start to finish, slowly. Those sites are worth seeking out.
+*Role:* fur cloaks count as cloth and give a cold-season bonus once seasons exist. Most tundra villages must import salt, so it is their lifeline import. A rare tundra site on an ocean shore with sea salt flats can make its own furs from start to finish, slowly. Those sites are worth seeking out.
 
 ### L12 · Riverboats `oak_grove` (+ core pitch and linen)
 | Id | Name | Recipe | Cycle | Workers | Site rule | Tier |
@@ -355,7 +355,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 | tar_kiln | Tar kiln | 2 logs → 1 pitch | 70 | 1 | within 3 tiles of forest | 3 |
 | shipwright | Shipwright | 3 oak + 1 pitch + 2 linen → 1 riverboat | 300 | 4 | touches water | 3 |
 
-*Role:* a nation-layer good. An exported riverboat raises route capacity from that node, and it counts toward Merchant League demands for "roads, ports, safe trade". It is never consumed inside the village.
+*Role:* a nation-layer good. An exported riverboat raises route capacity from that node. It is never consumed inside the village.
 
 ## 7. Location-chain dependency matrix
 
@@ -381,11 +381,7 @@ Most villages still have to import salt, which makes it the medieval nation's fi
 
 ## 8. Exports and faction demand
 
-| Faction (culture) | Demands drawn from | Typical source biome |
-| --- | --- | --- |
-| The Church (Abbey settlers) | wine, candles, cheese, bread, mead | Heartland |
-| Merchant League (River folk) | salt, salt fish, fine cloth, pottery, jewellery, riverboats | Riverland, Coast, Marsh |
-| Clan Council (Highland clans) | tools, arms, steel, fur cloaks, iron | Hills, Mountain, Tundra |
+**Faction demands** now come from [FACTIONS.md](FACTIONS.md). The culture factions and their demand table were replaced on 15 Oct 2026. Location goods still matter to factions: town manors want luxuries such as wine and fine cloth, and supplying a faction's households raises its favour (FACTIONS.md §8).
 
 Export value per unit, for the charter bundle: core goods 1, uncommon finished goods 3, single-rare goods 4, ★ goods 6, jewellery 10. A village's specialty is the location chain its signature deposits allow. Charter roles map naturally: **Producer** (L1, L4, L6, L7), **Garrison** (L9, L11), **Market** (L3, L5, L10, L12).
 

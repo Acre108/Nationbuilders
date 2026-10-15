@@ -372,6 +372,62 @@ def mill():
     return sails
 
 
+def chapel():
+    # A small stone chapel on a 2 x 3 plot: plastered nave, slate roof, a
+    # timber bell turret over the door and a lancet window on each side.
+    w,d,z=1.30,2.05,-.12
+    foundation(w,d,z)
+    box((0,.20+.70,z),(w,1.40,d),'e3d8bd','wall')
+    front=z+d/2+.03
+    for x in (-w/2,w/2):
+        for zz in (z-d/2,front): box((x,.90,zz),(.09,1.45,.07),STONE)
+    for y in (.27,1.60): box((0,y,front),(w+.08,.075,.07))
+    roof(w+.24,d+.30,1.60,.86,z,'506d75')
+    door(0,front+.045,height=.82,width=.44)
+    # Pointed lancet over the door and along both walls.
+    mesh('Lancet',[(-.13,1.02,front+.02),(.13,1.02,front+.02),(0,1.38,front+.02),
+        (-.13,1.02,front+.05),(.13,1.02,front+.05),(0,1.38,front+.05)],
+        [(0,1,2),(3,5,4),(0,3,4,1),(1,4,5,2),(2,5,3,0)],'2f3338')
+    for side in (-1,1):
+        for zz in (z-.45,z+.35):
+            box((side*(w/2+.02),.95,zz),(.05,.46,.20),'2f3338')
+            box((side*(w/2+.035),1.21,zz),(.06,.06,.24),STONE)
+    # Bell turret: four posts, a hanging bell and a small spire.
+    tz=front-.30
+    for x in (-.17,.17):
+        for dz in (-.17,.17): box((x,2.66,tz+dz),(.05,.42,.05))
+    cylinder((0,2.62,tz),.10,.18,'b08d48',10,top=.05)
+    box((0,2.47,tz),(.42,.06,.42),TIMBER)
+    cylinder((0,3.12,tz),.27,.52,'506d75',4,top=0)
+    beam((0,3.36,tz),(0,3.62,tz),.03,'c6a66d')
+    beam((-.08,3.53,tz),(.08,3.53,tz),.025,'c6a66d')
+    # Churchyard bench and lantern post.
+    box((-.48,.22,front+.35),(.46,.06,.16),WOOD)
+    for x in (-.66,-.30): box((x,.15,front+.35),(.05,.14,.12),WOOD)
+    beam((.55,.10,front+.30),(.55,.82,front+.30),.04,IRON)
+    box((.55,.88,front+.30),(.12,.14,.12),'e9c46a')
+
+
+def berry_bushes():
+    # A fenced patch of berry bushes with a picker's bench and basket.
+    box((0,.07,0),(1.82,.08,1.82),'5d5434')
+    for i,(x,z) in enumerate(((-.48,-.45),(.42,-.50),(-.05,.02),(-.55,.50),(.50,.42))):
+        ellipsoid((x,.36,z),(.32,.30,.30),'4f7340' if i%2 else '5b7d45')
+        ellipsoid((x+.06,.50,z-.05),(.20,.18,.20),'6b8c4e')
+        for j in range(7):
+            angle=j*math.tau/7+i
+            ellipsoid((x+math.sin(angle)*.26,.30+(j%3)*.10,z+math.cos(angle)*.25),
+                (.045,.045,.045),'b23a4c' if j%2 else '7d2a52')
+    for z in (-.88,.88):
+        for x in (-.85,0,.85): box((x,.24,z),(.05,.34,.05))
+        box((0,.33,z),(1.76,.04,.04),WOOD)
+    for x in (-.88,.88):
+        for zz in (-.43,.43): box((x,.24,zz),(.05,.34,.05))
+        box((x,.33,0),(.04,.04,1.76),WOOD)
+    box((.62,.20,.78),(.42,.06,.16),WOOD)
+    stock('basket',(.62,.23,.78))
+
+
 def sack(color='d8caaa'):
     cylinder((0,.13,0),.12,.24,color,10,top=.087)
     ellipsoid((0,.07,0),(.126,.075,.12),color)
@@ -379,8 +435,26 @@ def sack(color='d8caaa'):
     cylinder((0,.233,0),.066,.023,TIMBER,10)
 
 
-def stock(good):
-    if good == 'flour':
+def basket(p, berries=True):
+    x,y,z=p
+    cylinder((x,y+.08,z),.13,.16,'a07a46',12,top=.15)
+    cylinder((x,y+.165,z),.155,.02,'7a5a33',12)
+    for i in range(6):
+        angle=i*math.tau/6
+        beam((x+math.sin(angle)*.14,y+.02,z+math.cos(angle)*.14),
+             (x+math.sin(angle)*.15,y+.16,z+math.cos(angle)*.15),.012,'7a5a33')
+    if berries:
+        for i in range(9):
+            angle=i*math.tau/9
+            r=.04+(i%3)*.03
+            ellipsoid((x+math.sin(angle)*r,y+.18+(i%2)*.02,z+math.cos(angle)*r),
+                (.035,.035,.035),'b23a4c' if i%2 else '7d2a52')
+
+
+def stock(good, at=(0,0,0)):
+    if good in ('berries','basket'):
+        basket(at)
+    elif good == 'flour':
         sack()
         box((0,.14,.121),(.065,.065,.009),'a98d71')
     elif good == 'water':
@@ -444,11 +518,17 @@ def export(name, maker):
     print('EXPORTED',name, sum(len(o.data.polygons) for o in objects),'faces')
 
 
+import sys
+# Optional names after "--" export only those assets and leave the .blend alone:
+#   blender --background --python tools/build_medieval_assets.py -- chapel stock_berries
+ONLY = sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []
 for name, maker in [('house',house),('house_tier2',lambda:house(True)),('storehouse',storehouse),
-        ('farm',farm),('well',well),('woodcutter',woodcutter),('forester',forester),('mill',mill),('bakery',bakery)]:
-    export(name,maker)
-for good in ('wheat','flour','water','logs','bread','crate'):
-    export('stock_'+good,lambda good=good:stock(good))
+        ('farm',farm),('well',well),('woodcutter',woodcutter),('forester',forester),('mill',mill),('bakery',bakery),
+        ('chapel',chapel),('berry_bushes',berry_bushes)]:
+    if not ONLY or name in ONLY: export(name,maker)
+for good in ('wheat','flour','water','logs','bread','berries','crate'):
+    if not ONLY or 'stock_'+good in ONLY: export('stock_'+good,lambda good=good:stock(good))
+if ONLY: sys.exit(0)
 
 # Arrange the source kit as a browsable gallery; exported assets retain origin pivots.
 for i,(name,objects) in enumerate(ASSETS):

@@ -4,5 +4,5 @@
   {"id":"bread", "name":"Bread", "color":"b78a59"},
   {"id":"water", "name":"Water", "color":"3a93a1"},
   {"id":"logs", "name":"Logs", "color":"6b6152"},
-  {"id":"berries", "name":"Berries", "color":"c76a7a", "price":2}
+  {"id":"berries", "name":"Berries", "color":"c76a7a"}
 ]

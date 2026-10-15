@@ -171,7 +171,9 @@ func _snapshot_restore(t) -> void:
 func _legacy_restore(t) -> void:
 	var sim = Sim.new(73)
 	Scenario.starter(sim)
-	sim.step(250)
+	# Stop before the first Villager house: a version-one save cannot hold the
+	# working-class factions, which both copies then gain at the same tick.
+	sim.step(200)
 	var campaign = Campaign.new()
 	campaign.generate("Legacy hearth",73)
 	var site := Campaign._state(sim.site)

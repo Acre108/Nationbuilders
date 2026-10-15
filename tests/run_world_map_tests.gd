@@ -36,6 +36,15 @@ func _run() -> void:
 	check(view.hovered == world.start and view.panel.visible, "Hovering the start hex selects it and opens the panel")
 	check(world.data.biomes[world.hex(world.start).biome].name in view.panel_text.get_parsed_text() and "Starting region" in view.panel_text.get_parsed_text(), "Panel names the hex's biome and marks the start")
 	check("can be founded" in view.panel_text.get_parsed_text(), "Panel says the start hex can be founded")
+	var start_factions: Array = world.data.biomes[world.hex(world.start).biome].factions
+	var start_text: String = view.panel_text.get_parsed_text()
+	check(not start_factions.is_empty() and start_factions.all(func(id): return world.data.factions[id].name in start_text) and "Interested factions:" in start_text, "Panel lists the factions the start hex's biome interests")
+	check("With the first Villagers: %s, %s" % [world.data.factions.union.name, world.data.factions.populist.name] in start_text, "Panel says unions and populists come with the first Villagers")
+	var bleak := _find(func(info): return info.biome in ["marsh", "tundra"])
+	if bleak != view.NO_HEX:
+		check("Interested factions: none" in view.describe(bleak), "A %s hex interests no factions" % world.hex(bleak).biome)
+	else:
+		print("SKIP: seed 73 has no marsh or tundra hex")
 	var peak := _find(func(info): return info.elevation >= 3)
 	await _hover(peak)
 	check(view.hovered == peak, "Hover picks raised hexes by their prism top")

@@ -26,16 +26,22 @@ func update(sim, house) -> void:
 		if not house.needs_met.has(good) and house.input.take(good, int(consumption[good])):
 			house.needs_met[good] = true
 			sim.consumed[good] = int(sim.consumed.get(good, 0)) + int(consumption[good])
-	house.happiness = 100 * house.needs_met.size() / maxi(1, consumption.size())
-	house.needs_ok = house.needs_met.size() == consumption.size()
+	# A service need (a chapel) is met while a staffed provider is in range.
+	var services := counted_services(row)
+	for service in services:
+		if not house.needs_met.has(service) and sim.serves(house, service):
+			house.needs_met[service] = true
+	var total := consumption.size() + services.size()
+	house.happiness = 100 * house.needs_met.size() / maxi(1, total)
+	house.needs_ok = house.needs_met.size() == total
 	house.missing_need = ""
 	if not house.needs_ok:
 		if sim.grid.access(house).is_empty():
 			house.missing_need = "road access"
 		else:
-			for good in consumption:
-				if not house.needs_met.has(good):
-					house.missing_need = good
+			for need in consumption.keys() + services:
+				if not house.needs_met.has(need):
+					house.missing_need = need
 					break
 	if house.needs_ok:
 		house.satisfied_ticks += 1
@@ -59,6 +65,10 @@ func update(sim, house) -> void:
 			sim.events.append("A homestead returned to %s at tick %d" % [sim.db.tiers[house.tier].name, sim.tick])
 	else:
 		house.unsatisfied_ticks = 0
+
+## Services a tier needs, other than shelter, which every house has.
+static func counted_services(tier: Dictionary) -> Array:
+	return tier.get("services", []).filter(func(service): return service != "shelter")
 
 ## Average happiness over the house's completed cycles, or -1 before its first.
 static func settled(house) -> int:
