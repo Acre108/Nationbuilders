@@ -86,7 +86,7 @@ func _village_round_trip() -> void:
 	village.sim.step(50)
 	var map_button: Button = village.hud.map_button
 	check(map_button.visible and map_button.tooltip_text == "World map", "Village HUD has a world map button")
-	check(absf(map_button.position.x + 56.0 - village.hud.sun_button.position.x) < 1.0 and map_button.position.y == village.hud.sun_button.position.y, "World map button sits beside the weather button")
+	check(absf(map_button.position.x + 56.0 - village.hud.cog_button.position.x) < 1.0 and map_button.position.y == village.hud.cog_button.position.y, "World map button sits beside the options cog")
 	await _click(map_button.get_global_rect().get_center())
 	var map = village.world_map_view
 	# Taken as the map opens; the running village may have stepped while the click landed.

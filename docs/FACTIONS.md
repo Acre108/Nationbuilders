@@ -160,7 +160,7 @@ The weight of one step for each row lives in `factions.json`. First-pass weights
 | Strikes and riots | 10 each |
 | Power above 15% | 0.5 per point |
 
-Most rows read values the sim already has: `tax_percent`, `markup_percent`, `idle_workers`, house `happiness`, the ledger's `unpaid` and the forestry tree count.
+Most rows read values the sim already has: `tax_percent`, the storehouses' `average_markup()`, `idle_workers`, house `happiness`, the ledger's `unpaid` and the forestry tree count.
 
 **The press.** Once the cultural elite is organised, its favour colours how everyone else sees the Crown.
 - Press tone is the cultural elite's favour ÷ 10, from −10 to +10.
@@ -302,7 +302,7 @@ Links to VILLAGERS.md §5.6:
 | `sim/economy.gd` | `settle()`: the owner's share goes to its coffers. For a producer it comes from the labour part. For a storehouse it comes from the `work` value (markup = cost − chain price), split off before that value reaches the payroll as carrier wages. `payday()`: the rare storehouse surplus follows the owner, then dues and rent are collected, then `factions.payday()` runs. New ledger keys `deals` and `buybacks` |
 | `sim/needs.gd` | No change. The happiness stance term and populist pull read `Needs.settled(house)` (−1 before the first full cycle counts as no data), and village morale comes from `morale(sim)` |
 | `sim/building.gd` | `owner` (`""` = Crown), `aligned`, a pull streak for each recruiting faction, `arrears`, `strike_until`; add them to the snapshot |
-| `sim/village_sim.gd` | `factions` state. Commands: `sell_building(uid, faction)`, `buy_back(uid)`, `accept_offer(id)`, `decline_offer(id)`, `break_pledge(id)`. `set_tax_percent` and `set_markup_percent` refuse changes a pledge locks, and `last_error` names the pledge |
+| `sim/village_sim.gd` | `factions` state. Commands: `sell_building(uid, faction)`, `buy_back(uid)`, `accept_offer(id)`, `decline_offer(id)`, `break_pledge(id)`. `set_tax_percent` and `set_pay` (for a storehouse's markup) refuse changes a pledge locks, and `last_error` names the pledge |
 | Saves | New snapshot keys. Campaign version 3. Version-2 saves load with Crown owners, unaligned houses, empty coffers and neutral favour |
 | `view/overlays/village_hud.gd` | Faction chips beside the gold counter (power % and a favour face), shown once a faction is organised. A Factions panel: power bar, stance terms, press tone, patron gifts, pledges and offers. Padlocks on pledged levers. In the inspector: the owner, a house's alignment and pulls, "Offer for sale" and "Buy back". The class overlay |
 

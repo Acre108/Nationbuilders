@@ -24,6 +24,7 @@ extends RefCounted
 const Economy = preload("res://sim/economy.gd")
 const Needs = preload("res://sim/needs.gd")
 const Labour = preload("res://sim/labour.gd")
+const Building = preload("res://sim/building.gd")
 const SETTLEMENT := "village"
 ## Event text when a faction arrives: its name and the tick.
 const FACTION_ARRIVED := "The %s arrived in the village at tick %d"
@@ -333,6 +334,9 @@ func _purchase(sim, id: String, excess: int) -> void:
 		var most := 0
 		for good in sim.db.goods:
 			var free: int = store.inventory.count(good) - sim._reserved(store.uid, "inventory", good, true)
+			# Goods promised to construction sites are not for sale.
+			if not sim.sites.is_empty():
+				free = mini(free, sim.available(good) - sim._reserved_from_stores(good))
 			var unit: int = sim.price(good)
 			if unit > 0 and unit <= excess and free > most:
 				choice = good
@@ -546,8 +550,8 @@ func pull(sim, house, id: String, relieved: bool = false) -> int:
 		total += int(weights.wages_in_full)
 	total += _capped(weights, "idle_worker", "idle_cap", sim.idle_workers)
 	total += int(weights.get("need_unmet", 0)) * needs_unmet(sim, house)
-	if weights.has("markup_step") and sim.markup_percent > int(weights.get("markup_over", 0)):
-		total += (sim.markup_percent - int(weights.get("markup_over", 0))) / int(weights.markup_step)
+	if weights.has("markup_step") and sim.average_markup() > int(weights.get("markup_over", 0)):
+		total += (sim.average_markup() - int(weights.get("markup_over", 0))) / int(weights.markup_step)
 	if weights.has("hall") and hall_in_reach(sim, house, id):
 		total += int(weights.hall)
 	if weights.has("neighbour"):
@@ -666,7 +670,7 @@ func stance_terms(sim, id: String) -> Dictionary:
 			"tax":
 				measure = maxi(0, sim.tax_percent - TAX_OVER)
 			"markup":
-				measure = maxi(0, sim.markup_percent - MARKUP_OVER)
+				measure = maxi(0, sim.average_markup() - MARKUP_OVER)
 			"idle_workers":
 				measure = maxi(0, sim.idle_workers * 100 / maxi(1, sim.workforce()) - IDLE_OVER)
 			"unpaid_public_workers":
@@ -903,12 +907,17 @@ func describe(sim, id: String, offer: Dictionary) -> String:
 			return "%s toward a %s within %d tiles of the house at %d,%d" % [silver, sim.db.buildings[hall_for(sim, id)].name.to_lower(), ORGANISE_TILES, house.cell.x, house.cell.y]
 	return silver
 
-## The level a pledge would hold if made now: the markup for a floor, the
-## tree count for woodland, else 0.
+## The level a pledge would hold if made now: the lowest storehouse markup for
+## a floor, the tree count for woodland, else 0.
 static func _pledge_level(sim, type: String) -> int:
 	match type:
 		"markup_floor":
-			return sim.markup_percent
+			var lowest := -1
+			for building in sim.buildings.values():
+				if building.definition.kind == "storehouse":
+					var percent: int = Economy.markup(building)
+					lowest = percent if lowest < 0 else mini(lowest, percent)
+			return Economy.DEFAULT_MARKUP_PERCENT if lowest < 0 else lowest
 		"woodland_kept":
 			return sim.grid.trees.size()
 	return 0
@@ -936,8 +945,10 @@ func accept(sim, id: String) -> bool:
 			var silver := mini(int(offer.silver), int(coffers[id]))
 			if offer.pledge == "tax_cap" and sim.tax_percent > TAX_CAP and not sim.set_tax_percent(TAX_CAP):
 				return false
-			if offer.pledge == "markup_cap" and sim.markup_percent > MARKUP_CAP and not sim.set_markup_percent(MARKUP_CAP):
-				return false
+			if offer.pledge == "markup_cap":
+				for building in sim.buildings.values():
+					if building.definition.kind == "storehouse" and Economy.markup(building) > MARKUP_CAP and not sim.set_pay(building.uid, Building.NORMAL):
+						return false
 			if offer.pledge == "no_workplace_stopped":
 				for building in sim.buildings.values():
 					if int(building.definition.workers) > 0:

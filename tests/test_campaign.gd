@@ -209,7 +209,7 @@ func _legacy_restore(t) -> void:
 	sim.wildlife.setup(sim.grid)
 	sim.forage.setup(sim.grid)
 	var sim_state := Campaign._state(sim)
-	for key in ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger"]:
+	for key in ["public_reserve","capital_reserve","public_frustration","period","ledger"]:
 		sim_state.erase(key)
 	var payload := {"version":1,"id":"legacy-test","name":"Legacy hearth","seed":73,
 		"generator":campaign.world.generator_version,"content":Campaign._content_hash(),

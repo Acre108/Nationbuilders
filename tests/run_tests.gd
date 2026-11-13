@@ -22,7 +22,7 @@ func _run() -> void:
 		quit(1)
 		return
 	quick = "--quick" in OS.get_cmdline_user_args()
-	for path in ["res://tests/test_content.gd", "res://tests/test_sim.gd", "res://tests/test_site.gd", "res://tests/test_rotation.gd", "res://tests/test_world.gd", "res://tests/test_forestry.gd", "res://tests/test_campaign.gd", "res://tests/test_logistics.gd", "res://tests/test_factions.gd", "res://tests/test_chains.gd", "res://tests/test_wildlife.gd", "res://tests/test_forage.gd", "res://tests/test_food_report.gd", "res://tests/test_labour.gd"]:
+	for path in ["res://tests/test_content.gd", "res://tests/test_sim.gd", "res://tests/test_site.gd", "res://tests/test_rotation.gd", "res://tests/test_world.gd", "res://tests/test_forestry.gd", "res://tests/test_campaign.gd", "res://tests/test_logistics.gd", "res://tests/test_factions.gd", "res://tests/test_chains.gd", "res://tests/test_wildlife.gd", "res://tests/test_forage.gd", "res://tests/test_food_report.gd", "res://tests/test_labour.gd", "res://tests/test_construction.gd"]:
 		var script = load(path)
 		if script == null or not script.can_instantiate():
 			check(false, "Could not compile " + path)

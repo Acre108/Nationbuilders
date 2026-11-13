@@ -188,7 +188,7 @@ static func pools(sim) -> Pools:
 			result.add(house.uid, rank(house_class(sim, house)), FOUNDERS)
 	return result
 
-## Staffs workplaces and carriers by priority: high, then normal, then low.
+## Staffs workplaces and carriers by pay: high, then normal, then low.
 ## Within a level, buildings take their whole crews in placement order, then
 ## that level's storehouses take a storekeeper (if a family of high enough
 ## class is free) and put carriers on shift, up to their carrier count.
@@ -201,13 +201,13 @@ static func staff(sim) -> int:
 	for level in [Building.HIGH, Building.NORMAL, Building.LOW]:
 		for building in sim.buildings.values():
 			# Halls have no jobs, so they are never staffed.
-			if building.priority != level or building.definition.kind in ["storehouse", "hall"]:
+			if building.pay != level or building.definition.kind in ["storehouse", "hall"]:
 				continue
 			var wanted: Dictionary = jobs(building.definition)
 			building.staffed = building.workers_enabled and free.can_fill(wanted)
 			building._crew = free.fill(wanted) if building.staffed else []
 		for building in sim.buildings.values():
-			if building.priority != level or building.definition.kind != "storehouse":
+			if building.pay != level or building.definition.kind != "storehouse":
 				continue
 			building.staffed = building.workers_enabled
 			building._keeper = -1
@@ -255,6 +255,20 @@ static func credit(sim, building, amount: int) -> void:
 	var offset: int = sim.tick % crew.size()
 	for index in crew.size():
 		_earn(sim, crew[index], each + (1 if (index - offset + crew.size()) % crew.size() < odd else 0))
+
+## Takes up to `each` silver per worker from what the building's crew's
+## families earned (a pay cut), never more than a family earned. Returns the
+## silver taken.
+static func dock(sim, building, each: int) -> int:
+	var taken := 0
+	for uid in building._crew:
+		var house = sim.buildings.get(uid)
+		if house == null:
+			continue
+		var cut: int = mini(each, house.earned)
+		house.earned -= cut
+		taken += cut
+	return taken
 
 static func _earn(sim, uid: int, amount: int) -> void:
 	var house = sim.buildings.get(uid)

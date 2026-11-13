@@ -71,6 +71,8 @@ func found(coord: Vector2i, settlement_name: String) -> bool:
 	if not candidate.valid or not Scenario.starter(candidate):
 		last_error = "Cannot found this village: " + candidate.last_error
 		return false
+	# Everything the player places from here goes up as a construction site.
+	candidate.construction_sites = true
 	var previous := village_at(coord)
 	var bonus := RESETTLEMENT_LOGS if not previous.is_empty() else 0
 	if bonus > 0: candidate.reserve.add("logs", bonus)
@@ -437,10 +439,27 @@ static func _state(object) -> Dictionary:
 ## building the Crown's and every house unaligned, with no pull streak). The
 ## village is founded again on load, so its site's factions arrive with their
 ## endowments as outside money.
-const LEGACY_ADDED := ["public_reserve","capital_reserve","markup_percent","public_frustration","period","ledger","frustration","happiness_history","crew","wages_paid","outside_money","factions","priority","keep_service_reserve","owner","aligned","owner_work","pull_leader","pull_streak","earned","adults","children"]
+const LEGACY_ADDED := ["public_reserve","capital_reserve","public_frustration","period","ledger","frustration","happiness_history","crew","wages_paid","outside_money","factions","pay","keep_service_reserve","owner","aligned","owner_work","pull_leader","pull_streak","earned","adults","children"]
+## Fields replaced since: a building's labour priority became its pay at the
+## same levels, and the village-wide markup became each storehouse's pay.
+const LEGACY_RENAMED := {"priority": "pay"}
+const LEGACY_REMOVED := ["markup_percent"]
 
 static func _restore(object, state: Dictionary) -> bool:
 	var expected := _state(object)
+	state = state.duplicate()
+	for key in LEGACY_REMOVED:
+		state.erase(key)
+	for key in LEGACY_RENAMED:
+		if state.has(key) and expected.has(LEGACY_RENAMED[key]) and not state.has(LEGACY_RENAMED[key]):
+			state[LEGACY_RENAMED[key]] = state[key]
+			state.erase(key)
+	for key in ["period", "ledger"]:
+		if expected.has(key) and state.has(key):
+			state[key] = state[key].duplicate(true)
+			for entry in [state[key]] if key == "period" else state[key]:
+				if entry is Dictionary and not entry.has("pay_cuts"):
+					entry.pay_cuts = 0
 	for key in state:
 		if not expected.has(key) or typeof(state[key]) != typeof(expected[key]): return false
 	for key in expected:

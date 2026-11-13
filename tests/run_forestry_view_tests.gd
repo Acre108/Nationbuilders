@@ -1,4 +1,5 @@
 extends SceneTree
+const Forestry = preload("res://sim/forestry.gd")
 var failures: Array[String] = []
 var checks := 0
 var view
@@ -42,7 +43,7 @@ func _run() -> void:
 	var model: Node3D = view.building_nodes[forester.uid]
 	check(model.get_meta("medieval",false) and is_equal_approx(model.rotation.y,PI/2),"Forester uses authored model and build facing")
 	view.hud.refresh(view.sim,forester.uid,"inspect")
-	check("mature in 60 s" in view.hud.inspector.get_parsed_text(),"Inspector explains regrowth")
+	check("grow in %d s" % (Forestry.MATURITY_TICKS / view.sim.TICKS_PER_SECOND) in view.hud.inspector.get_parsed_text(),"Inspector explains regrowth")
 	view.sim.step(50)
 	view._sync_view()
 	check(not view.sim.grid.saplings.is_empty(),"Forester plants nearby")

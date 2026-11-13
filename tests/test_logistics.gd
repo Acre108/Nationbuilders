@@ -42,13 +42,14 @@ func _store_limit(t) -> void:
 
 ## The starter village with the full chain, a second house and a forester
 ## keeps both houses at Villagers for an hour without the storehouse clogging.
-## Retail markup is off so households' budgets cannot decide the result: this
-## run checks logistics, and the treasury balance has its own probe.
+## The storehouse is on low pay, the lowest markup, so households' budgets
+## are less likely to decide the result: this run checks logistics, and the
+## treasury balance has its own probe.
 func _long_run(t) -> void:
 	var sim = Sim.new(73)
-	if sim.has_method("set_markup_percent"):
-		sim.set_markup_percent(0)
 	t.check(Scenario.starter(sim), "Long run: starter layout")
+	sim.set_pay(_find(sim,"storehouse").uid, 0)
+	sim.set_keep_service_reserve(false)
 	while sim.unlocked_tier < 2 and sim.tick < 3000:
 		sim.step(1)
 	var shift: Vector2i = Scenario.offset(sim)

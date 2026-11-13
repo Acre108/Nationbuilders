@@ -8,18 +8,24 @@ var rotation_quarters := 0
 var input
 var output
 var inventory
+## A construction site's delivered building materials, up to its row's cost.
+## Empty once built; see VillageSim.sites.
+var materials
+## A workplace's progress through its cycle; on a construction site, ticks of
+## building once every material has arrived.
 var progress := 0
 ## Reserved tree/planting site for a forestry cycle; (-1,-1) means none.
 var work_cell := Vector2i(-1,-1)
 var staffed := false
 ## Player switch: a stopped building releases its workers and receives no inputs.
 var workers_enabled := true
-## Labour priority: workers fill HIGH jobs first, then NORMAL, then LOW. A
-## storehouse's priority applies to its carriers.
+## Pay level (economy.gd): workers fill the best-paid jobs first, HIGH, then
+## NORMAL, then LOW. A storehouse's pay is its markup, shared by its
+## storekeeper and carriers.
 const LOW := 0
 const NORMAL := 1
 const HIGH := 2
-var priority := NORMAL
+var pay := NORMAL
 var status := "idle"
 var tier := 1
 var satisfied_ticks := 0
@@ -81,6 +87,14 @@ func _init(number: int, row: Dictionary, at: Vector2i, orientation: int = 0) -> 
 	input = Storage.new(int(row.input_capacity))
 	output = Storage.new(int(row.output_capacity))
 	inventory = Storage.new(int(row.get("storage_capacity", 0)))
+	materials = Storage.new(material_count(row))
+
+## Units of building material a row costs, all goods together.
+static func material_count(row: Dictionary) -> int:
+	var total := 0
+	for amount in row.get("cost", {}).values():
+		total += int(amount)
+	return total
 
 static func rotated_footprint(row: Dictionary, orientation: int = 0) -> Vector2i:
 	var size := Vector2i(int(row.footprint[0]), int(row.footprint[1]))
@@ -98,7 +112,7 @@ func cells() -> Array[Vector2i]:
 	return result
 
 func snapshot() -> Dictionary:
-	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"priority":priority,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"happiness_history":happiness_history.duplicate(),"crew":crew,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration,"wages_paid":wages_paid,"owner":owner,"aligned":aligned,"owner_work":owner_work,"pull_leader":pull_leader,"pull_streak":pull_streak,"earned":earned,"adults":adults,"children":children}
+	return {"uid":uid,"id":definition.id,"cell":[cell.x,cell.y],"rotation_quarters":rotation_quarters,"input":input.items.duplicate(),"output":output.items.duplicate(),"inventory":inventory.items.duplicate(),"materials":materials.items.duplicate(),"progress":progress,"work_cell":[work_cell.x,work_cell.y],"staffed":staffed,"workers_enabled":workers_enabled,"pay":pay,"status":status,"tier":tier,"satisfied_ticks":satisfied_ticks,"unsatisfied_ticks":unsatisfied_ticks,"needs_next_tick":needs_next_tick,"needs_ok":needs_ok,"missing_need":missing_need,"needs_met":needs_met.duplicate(),"happiness":happiness,"happiness_history":happiness_history.duplicate(),"crew":crew,"silver":silver,"last_wage":last_wage,"last_tax":last_tax,"frustration":frustration,"wages_paid":wages_paid,"owner":owner,"aligned":aligned,"owner_work":owner_work,"pull_leader":pull_leader,"pull_streak":pull_streak,"earned":earned,"adults":adults,"children":children}
 
 ## Whether a faction may own a building of this row: never a service, a well
 ## or a road (docs/FACTIONS.md §5.1).
@@ -110,6 +124,15 @@ static func from_snapshot(state: Dictionary, content):
 		return null
 	if not _whole(state.get("uid")) or state.uid < 1:
 		return null
+	# Pay replaced labour priority on 16 Oct 2026, at the same levels.
+	if state.has("priority") and not state.has("pay"):
+		state = state.duplicate()
+		state.pay = state.priority
+		state.erase("priority")
+	# Construction sites arrived on 16 Oct 2026; older buildings hold no materials.
+	if not state.has("materials"):
+		state = state.duplicate()
+		state.materials = {}
 	var result = load("res://sim/building.gd").new(int(state.uid), content.buildings[state.id], Vector2i(int(state.cell[0]),int(state.cell[1])))
 	var expected: Dictionary = result.snapshot()
 	if state.size() != expected.size(): return null
@@ -118,9 +141,9 @@ static func from_snapshot(state: Dictionary, content):
 		if expected[key] is int:
 			if not _whole(state[key]) or state[key] < 0: return null
 		elif typeof(state[key]) != typeof(expected[key]): return null
-		if key not in ["uid","id","cell","work_cell","input","output","inventory"]:
+		if key not in ["uid","id","cell","work_cell","input","output","inventory","materials"]:
 			result.set(key, int(state[key]) if expected[key] is int else state[key].duplicate(true) if state[key] is Dictionary else state[key])
-	if not content.tiers.has(result.tier) or result.rotation_quarters > 3 or result.priority > HIGH: return null
+	if not content.tiers.has(result.tier) or result.rotation_quarters > 3 or result.pay > HIGH: return null
 	# An owner is a known faction on a building it may own; only houses align.
 	if not result.owner.is_empty() and (not content.factions.has(result.owner) or not ownable(result.definition, content)): return null
 	if not result.aligned.is_empty() and (not content.factions.has(result.aligned) or result.definition.kind != "house"): return null
@@ -138,11 +161,13 @@ static func from_snapshot(state: Dictionary, content):
 		if not _whole(value) or value < 0 or value > 100: return null
 		result.happiness_history.append(int(value))
 	result.work_cell = Vector2i(int(state.work_cell[0]),int(state.work_cell[1]))
-	for slot in ["input","output","inventory"]:
+	for slot in ["input","output","inventory","materials"]:
 		var restored = Storage.from_snapshot(state[slot], result.get(slot).capacity)
 		if restored == null: return null
 		for good in restored.items:
 			if not content.goods.has(good): return null
+			# A site holds only what its row costs.
+			if slot == "materials" and restored.count(good) > int(result.definition.cost.get(good, 0)): return null
 		result.set(slot, restored)
 	return result
 

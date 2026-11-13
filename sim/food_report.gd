@@ -11,11 +11,12 @@ extends RefCounted
 ## holds enough still count as spare supply.
 const Needs = preload("res://sim/needs.gd")
 const FOOD_NEEDS := ["basic", "staple"]
-const MINUTE := 600
-const WINDOW := 1200
-const STEP := 100
+## Ticks in a real minute at 1x: 60 * village_sim.TICKS_PER_SECOND.
+const MINUTE := 300
+const WINDOW := 2 * MINUTE
+const STEP := MINUTE / 6
 ## Below this many measured ticks the rates are too noisy to judge.
-const MIN_SPAN := 300
+const MIN_SPAN := MINUTE / 2
 ## With food short, stores lasting at least this many minutes keep the
 ## balance amber rather than red.
 const STORE_MINUTES := 3.0

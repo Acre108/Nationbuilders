@@ -58,6 +58,9 @@ var wind_speed_scale: float = 1.0
 ## 0 dry .. 1 soaked. Integrated over time: rain wets, mist leaves dew, sun
 ## dries. Pushed to the atmosphere_wetness shader global each frame.
 var wetness: float = 0.0
+## Multiplies only the clock's pace: the village sets it to the game speed,
+## so the sun stops when the game is paused and runs faster at 3x.
+var clock_scale: float = 1.0
 ## Lightning and thunder (STORM only) and the ambience beds. Children,
 ## advanced from _tick() so they always see this frame's weather.
 var lightning: Lightning
@@ -246,7 +249,7 @@ func get_wind_scroll() -> Vector2:
 
 func _tick(delta: float) -> void:
 	if profile.day_length_minutes > 0.0:
-		_hour = AtmosphereModel.wrap_hour(_hour + delta * 24.0 / (profile.day_length_minutes * 60.0))
+		_hour = AtmosphereModel.wrap_hour(_hour + delta * clock_scale * AtmosphereModel.clock_rate(profile, _hour))
 	# The tide follows the clock, running or scrubbed (SeaState); the sun
 	# follows the location's date.
 	if is_instance_valid(foliage_location):

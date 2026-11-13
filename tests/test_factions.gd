@@ -4,6 +4,7 @@ extends RefCounted
 const Sim = preload("res://sim/village_sim.gd")
 const Scenario = preload("res://sim/scenario.gd")
 const Economy = preload("res://sim/economy.gd")
+const Building = preload("res://sim/building.gd")
 const Factions = preload("res://sim/factions.gd")
 const ContentDB = preload("res://sim/content_db.gd")
 const WorldData = preload("res://sim/world/world_data.gd")
@@ -635,7 +636,7 @@ func _halls(t) -> void:
 	t.check(not staffed and not touched, "Halls are never staffed and never a carrier's source or destination")
 	t.check(hall.silver == 0 and alehouse.silver == 0 and hall.input.total() + hall.output.total() + hall.inventory.total() == 0 and hall.last_wage == 0, "Halls hold no silver or goods and are never paid")
 	_money(t, sim, "halls")
-	t.check(not sim.set_workers_enabled(hall.uid, false) and not sim.set_priority(hall.uid, 2), "A hall has no workers to stop or prioritise")
+	t.check(not sim.set_workers_enabled(hall.uid, false) and not sim.set_pay(hall.uid, 2), "A hall has no workers to stop or prioritise")
 	t.check(not sim.sell_building(hall.uid, "union") and not sim.sell_building(alehouse.uid, "gentry"), "Halls are never for sale: " + sim.last_error)
 	var coffers: int = sim.factions.coffers.union
 	treasury = sim.treasury
@@ -668,7 +669,7 @@ func _pull_terms(t) -> void:
 	house.happiness_history = [100, 100, 100]
 	house.last_wage = 0
 	sim.idle_workers = 0
-	sim.markup_percent = 10
+	_find(sim, "storehouse").pay = Building.NORMAL
 	var workforce: int = sim.workforce()
 	t.check(sim.factions.pull(sim, house, "union") == 10 and sim.factions.pull(sim, house, "populist") == 0, "Full employment: union 10, populist 0 (%d, %d)" % [sim.factions.pull(sim, house, "union"), sim.factions.pull(sim, house, "populist")])
 	sim.idle_workers = 3
@@ -680,11 +681,11 @@ func _pull_terms(t) -> void:
 	t.check(Factions.needs_unmet(sim, house) == 2 and sim.factions.pull(sim, house, "populist") == 4, "Settled at 50%% of four needs: two unmet, 4 populist pull")
 	house.happiness_history = []
 	t.check(Factions.needs_unmet(sim, house) == 0, "No needs count as unmet before the first full cycle")
-	sim.markup_percent = 30
-	t.check(sim.factions.pull(sim, house, "populist") == 4, "A 30%% markup adds (30 − 10) ÷ 5 to the populists")
-	sim.markup_percent = 14
-	t.check(sim.factions.pull(sim, house, "populist") == 0, "A markup within 5 points of 10%% adds nothing")
-	sim.markup_percent = 10
+	_find(sim, "storehouse").pay = Building.HIGH
+	t.check(sim.factions.pull(sim, house, "populist") == 2, "A 20%% markup adds (20 − 10) ÷ 5 to the populists")
+	_find(sim, "storehouse").pay = Building.LOW
+	t.check(sim.factions.pull(sim, house, "populist") == 0, "A markup at or below 10%% adds nothing")
+	_find(sim, "storehouse").pay = Building.NORMAL
 	var workers := int(sim.db.tiers[house.tier].workers_per_house)
 	house.last_wage = Economy.WAGE * workers
 	t.check(Factions.wages_in_full(sim, house) and sim.factions.pull(sim, house, "union") == 13, "A full wage for each employed worker adds 3 to the unions")
@@ -1122,7 +1123,7 @@ func _stance_terms(t) -> void:
 	var f = sim.factions
 	var house = _find(sim, "house")
 	sim.tax_percent = 20
-	sim.markup_percent = 20
+	_find(sim, "storehouse").pay = Building.HIGH
 	sim.idle_workers = sim.workforce() * 3 / 10
 	var idle_points: int = sim.idle_workers * 100 / sim.workforce() - 10
 	t.check(f.stance_terms(sim, "union").tax == -15 and f.stance_terms(sim, "populist").tax == -15, "Tax: 3 per point above the default 15%")
@@ -1131,7 +1132,7 @@ func _stance_terms(t) -> void:
 	sim.idle_workers = sim.workforce() / 10
 	t.check(f.stance_terms(sim, "union").idle_workers == 0, "Up to 10%% of the workforce idle counts nothing")
 	sim.tax_percent = 15
-	sim.markup_percent = 10
+	_find(sim, "storehouse").pay = Building.NORMAL
 	t.check(f.stance_terms(sim, "union").tax == 0 and f.stance_terms(sim, "middle").markup == 0, "Tax and markup at their defaults count nothing")
 	for entry in sim.ledger:
 		entry.unpaid = Economy.WAGE * 2
@@ -1313,10 +1314,11 @@ func _pledges(t) -> void:
 	_endow(other, "middle", 300)
 	_endow(other, "gentry", 600)
 	_endow(other, "populist", 300)
-	other.markup_percent = 25
-	t.check(not _install(other, "populist", "pledge", "markup_cap").is_empty() and other.accept_offer("populist") and other.markup_percent == 10, "A markup cap lowers the markup to 10%")
-	t.check(not other.set_markup_percent(12) and "markup at or below 10%" in other.last_error, "and holds it there")
-	t.check(not _install(other, "middle", "pledge", "markup_floor").is_empty() and other.accept_offer("middle") and not other.set_markup_percent(9) and "markup at 10% or higher" in other.last_error, "A markup floor holds the markup at its level")
+	var other_store = _find(other, "storehouse")
+	other_store.pay = Building.HIGH
+	t.check(not _install(other, "populist", "pledge", "markup_cap").is_empty() and other.accept_offer("populist") and Economy.markup(other_store) == 10, "A markup cap lowers every storehouse's markup to 10%")
+	t.check(not other.set_pay(other_store.uid, Building.HIGH) and "markup at or below 10%" in other.last_error, "and holds it there")
+	t.check(not _install(other, "middle", "pledge", "markup_floor").is_empty() and other.accept_offer("middle") and not other.set_pay(other_store.uid, Building.LOW) and "markup at 10% or higher" in other.last_error, "A markup floor holds the markup at its level")
 	t.check(not _install(other, "union", "pledge", "no_house_sales").is_empty() and other.accept_offer("union"), "Pledge no house sales")
 	t.check(not other.sell_building(_find(other, "house").uid, "gentry") and "no house sold to a landlord" in other.last_error, "A house cannot be sold while pledged")
 	t.check(not other.factions.candidates(other, "gentry").any(func(o): return o.type == "bid" and other.buildings[int(o.uid)].definition.kind == "house"), "and the gentry stop bidding for houses")

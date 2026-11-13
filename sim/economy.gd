@@ -9,6 +9,10 @@ extends RefCounted
 ## storehouse surpluses above that cap, and spends gold on construction and
 ## public services. The player can set part of it aside: a
 ## public pay reserve and a capital reserve, each closed to the other's spending.
+## Each workplace has a pay level, and workers fill the best-paid jobs first
+## (labour.gd). A storehouse's pay is its markup. A producer's or service's
+## pay adds to, or cuts, its workers' wages each payday, the treasury paying
+## the raise or keeping the cut.
 ## Money is closed: treasury, payroll, every building's silver and every
 ## faction's coffers always sum to the founding treasury plus the outside money
 ## arriving factions brought (factions.gd). Reserves are part of the treasury,
@@ -22,9 +26,13 @@ const DEFAULT_TAX_PERCENT := 15
 ## The player sets tax in these steps, up to this limit.
 const TAX_STEP := 5
 const MAX_TAX_PERCENT := 50
-## Storehouses sell to households at this markup on the chain price.
+## Pay by level (Building.LOW, NORMAL, HIGH; decided 16 Oct 2026). A
+## storehouse sells to households at its level's markup on the chain price. A
+## producer's or service's workers each earn this much more (or less) per
+## payday than the normal rate.
+const STORE_MARKUP := [5, 10, 20]
+const PAY_BONUS := [-3, 0, 5]
 const DEFAULT_MARKUP_PERCENT := 10
-const MAX_MARKUP_PERCENT := 100
 ## Starting money the treasury gives a new household, per working adult in
 ## its family (decided 15 Oct 2026: village houses hold one family of 1–2
 ## adults), and a new storehouse.
@@ -35,7 +43,9 @@ const STOREHOUSE_CAPITAL := 100
 const PURSE_CAP := 2 * STOREHOUSE_CAPITAL
 ## Treasury income and spending per payday, for the Treasury panel. Deals are
 ## silver factions paid the treasury, such as for a building sold to them.
-const LEDGER_KEYS := ["tax","trade","refunds","public_pay","construction","unpaid","deals"]
+## Public pay includes raises for well-paid producers; pay cuts are what
+## low-paid producers' workers gave up.
+const LEDGER_KEYS := ["tax","trade","refunds","public_pay","construction","unpaid","deals","pay_cuts"]
 const LEDGER_PAYDAYS := 6
 ## "Keep services reserved" tops the public pay reserve up to this many
 ## paydays of the services' upkeep.
@@ -86,21 +96,28 @@ func need_price(sim, need: String) -> int:
 			best = int(prices[good])
 	return maxi(0, best)
 
-## What a storehouse charges households: the chain price plus the markup,
+## A storehouse's markup: its pay level's.
+static func markup(store) -> int:
+	return int(STORE_MARKUP[store.pay])
+
+## What a storehouse charges households: the chain price plus its markup,
 ## never less than 1 s more (so cheap goods such as water keep a margin). A
-## category need is priced at its cheapest good.
-func retail_price(sim, good: String) -> int:
+## category need is priced at its cheapest good. Without a storehouse, the
+## village's average markup.
+func retail_price(sim, good: String, store = null) -> int:
 	var price := need_price(sim, good)
-	if sim.markup_percent == 0:
+	var percent: int = markup(store) if store != null else sim.average_markup()
+	if percent == 0:
 		return price
-	return price + maxi(1, (price * sim.markup_percent + 50) / 100)
+	return price + maxi(1, (price * percent + 50) / 100)
 
 ## Only households pay the markup, and only when buying from a storehouse.
 ## Direct deliveries from a producer, and every workshop or storehouse
 ## purchase, are at the chain price.
 func sale_price(sim, buyer, seller, good: String) -> int:
-	if seller != null and buyer != null and seller.definition.kind == "storehouse" and buyer.definition.kind == "house":
-		return retail_price(sim, good)
+	# A house's construction site buys its materials for the treasury, at chain price.
+	if seller != null and buyer != null and seller.definition.kind == "storehouse" and buyer.definition.kind == "house" and not sim.sites.has(buyer.uid):
+		return retail_price(sim, good, seller)
 	return int(prices[good])
 
 ## A storehouse keeps enough silver to restock every good the village makes up
@@ -123,9 +140,22 @@ func purse_cap(sim, store) -> int:
 static func is_public(row: Dictionary) -> bool:
 	return bool(row.get("service", false))
 
-## A service's wages for one payday: each job at its class's wage (labour.gd).
-static func upkeep(row: Dictionary) -> int:
-	return Labour.service_pay(row) if is_public(row) else 0
+## A service's wages for one payday: each job at its class's wage (labour.gd),
+## plus or minus its pay level's bonus per job.
+static func upkeep(row: Dictionary, pay: int = 1) -> int:
+	if not is_public(row):
+		return 0
+	var jobs := 0
+	for count in Labour.jobs(row).values():
+		jobs += int(count)
+	return maxi(0, Labour.service_pay(row) + int(PAY_BONUS[pay]) * jobs)
+
+## A staffed producer's raise (positive) or cut (negative) this payday: its
+## pay level's bonus for each worker. Services have theirs in their upkeep.
+static func pay_bonus(building) -> int:
+	if is_public(building.definition) or building.definition.kind != "producer" or not building.staffed:
+		return 0
+	return int(PAY_BONUS[building.pay]) * building._crew.size()
 
 ## Working money the treasury hands a new building: a household's first purse,
 ## a storehouse's trading purse, or enough for a workshop to fill its inputs once.
@@ -241,7 +271,7 @@ func payday(sim) -> void:
 	for building in sim.buildings.values():
 		if not building.staffed or not is_public(building.definition):
 			continue
-		var due := upkeep(building.definition)
+		var due := upkeep(building.definition, building.pay)
 		var paid := mini(due, public_funds(sim))
 		sim.public_reserve -= mini(paid, sim.public_reserve)
 		sim.treasury -= paid
@@ -254,6 +284,7 @@ func payday(sim) -> void:
 			building.frustration += unpaid_workers
 			sim.public_frustration += unpaid_workers
 			period.unpaid += due - paid
+	_adjust_producer_pay(sim)
 	_pay_households(sim)
 	_top_up_service_reserve(sim)
 	sim.factions.payday(sim)
@@ -261,6 +292,25 @@ func payday(sim) -> void:
 	while sim.ledger.size() > LEDGER_PAYDAYS:
 		sim.ledger.pop_front()
 	sim.period = blank_period()
+
+## Well-paid producers' raises come from public funds, as far as they reach,
+## and go to their crews' families. Low-paid producers' cuts come out of what
+## their crews' families earned and go to the treasury.
+func _adjust_producer_pay(sim) -> void:
+	for building in sim.buildings.values():
+		var bonus := pay_bonus(building)
+		if bonus > 0:
+			var paid := mini(bonus, public_funds(sim))
+			sim.public_reserve -= mini(paid, sim.public_reserve)
+			sim.treasury -= paid
+			sim.payroll += paid
+			sim.period.public_pay += paid
+			Labour.credit(sim, building, paid)
+		elif bonus < 0:
+			var taken: int = Labour.dock(sim, building, -bonus / building._crew.size())
+			sim.payroll -= taken
+			sim.treasury += taken
+			sim.period.pay_cuts += taken
 
 func _pay_households(sim) -> void:
 	var houses: Array = []
@@ -299,7 +349,7 @@ static func _top_up_service_reserve(sim) -> void:
 		return
 	var upkeep_due := 0
 	for building in sim.buildings.values():
-		upkeep_due += upkeep(building.definition)
+		upkeep_due += upkeep(building.definition, building.pay)
 	var short: int = SERVICE_RESERVE_PAYDAYS * upkeep_due - sim.public_reserve
 	sim.public_reserve += clampi(short, 0, free_gold(sim))
 

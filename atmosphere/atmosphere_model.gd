@@ -178,6 +178,35 @@ static func solar_position(latitude: float, day_of_year: float, hour: float) -> 
 	return Vector3(elevation, azimuth, sunrise)
 
 
+## Vector2(sunrise, sunset) hours for the profile's place and date: 6 and 18
+## on the PlacesOS sun path, NAN in polar day or night.
+static func daylight(profile: AtmosphereProfile) -> Vector2:
+	if is_nan(profile.latitude):
+		return Vector2(6.0, 18.0)
+	var sunrise := solar_position(profile.latitude, profile.day_of_year, 12.0).z
+	if is_nan(sunrise):
+		return Vector2(NAN, NAN)
+	var noon := 12.0 - _equation_of_time(TAU / 365.0 * (profile.day_of_year - 1.0)) / 60.0
+	return Vector2(sunrise, 2.0 * noon - sunrise)
+
+
+## In-game hours per real second at `hour`. With night_minutes set, the
+## daylight hours share the rest of the day's minutes and the night hours
+## share night_minutes; otherwise every hour runs at the same pace.
+static func clock_rate(profile: AtmosphereProfile, hour: float) -> float:
+	var minutes := profile.day_length_minutes
+	if minutes <= 0.0:
+		return 0.0
+	var span := daylight(profile)
+	if profile.night_minutes <= 0.0 or profile.night_minutes >= minutes or is_nan(span.x):
+		return 24.0 / (minutes * 60.0)
+	var h := wrap_hour(hour)
+	var light := span.y - span.x
+	if h >= span.x and h < span.y:
+		return light / ((minutes - profile.night_minutes) * 60.0)
+	return (24.0 - light) / (profile.night_minutes * 60.0)
+
+
 static func _declination(g: float) -> float:
 	return 0.006918 - 0.399912 * cos(g) + 0.070257 * sin(g) - 0.006758 * cos(2.0 * g) 		+ 0.000907 * sin(2.0 * g) - 0.002697 * cos(3.0 * g) + 0.00148 * sin(3.0 * g)
 

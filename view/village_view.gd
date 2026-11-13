@@ -14,6 +14,8 @@ const FoodOverlay = preload("res://view/food_overlay.gd")
 const VillageAtmosphere = preload("res://view/village_atmosphere.gd")
 const TerrainRelief = preload("res://view/terrain_relief.gd")
 const GridChanges = preload("res://view/grid_changes.gd")
+const ConstructionLayer = preload("res://view/construction_layer.gd")
+const UiSounds = preload("res://view/ui_sounds.gd")
 const Sites = preload("res://sim/world/sites.gd")
 const WorldMapScene = preload("res://view/world_map/world_map_view.tscn")
 signal campaign_map_requested
@@ -28,6 +30,10 @@ var wildlife_layer
 var forage_layer
 ## Food overlay (F7): fertile soil, wild food, fishing shore and game; see food_overlay.gd.
 var food_overlay
+## Construction sites, and the dust and pops of building; see construction_layer.gd.
+var construction
+## Interface sounds; see ui_sounds.gd.
+var sounds
 var atmosphere: AtmosphereSystem
 ## Hand-made site to play: --site=<name> on the command line, F4 to cycle.
 var site_name := "first_bread"
@@ -52,6 +58,9 @@ var ghost_root: Node3D
 var deposits_root: Node3D
 ## Class overlay markers (F5): houses by alignment, roads in a hall's reach.
 var class_root: Node3D
+## The operations overlay (F6): each workplace tinted by how it is running.
+var operations_root: Node3D
+var operations_signature := ""
 var class_signature := ""
 var carrier_root: Node3D
 var scenery_root: Node3D
@@ -70,6 +79,9 @@ var hover_cell := Vector2i(-1,-1)
 var pointer_position := Vector2(-1,-1)
 var accumulator := 0.0
 var speed := 1
+## The running clock's day at 1x: eight minutes of daylight, four of night.
+const DAY_MINUTES := 12.0
+const NIGHT_MINUTES := 4.0
 var hud_elapsed := 0.0
 var ghost_signature := ""
 var autosave_elapsed := 0.0
@@ -110,6 +122,10 @@ func _ready() -> void:
 	world.add_child(forage_layer)
 	food_overlay = FoodOverlay.new()
 	world.add_child(food_overlay)
+	sounds = UiSounds.new()
+	add_child(sounds)
+	construction = ConstructionLayer.new(factory, null, sounds)
+	world.add_child(construction)
 	weather_focus = Node3D.new()
 	weather_focus.position = camera.focus
 	world.add_child(weather_focus)
@@ -125,7 +141,7 @@ func _ready() -> void:
 	atmosphere.weather_focus = weather_focus
 	world.add_child(atmosphere)
 	foliage.wind_source = atmosphere
-	for kind in ["buildings","roads","ghost","deposits","classes","carriers","scenery"]:
+	for kind in ["buildings","roads","ghost","deposits","classes","operations","carriers","scenery"]:
 		var node := Node3D.new()
 		node.name = kind
 		world.add_child(node)
@@ -135,9 +151,11 @@ func _ready() -> void:
 			"ghost": ghost_root = node
 			"deposits": deposits_root = node
 			"classes": class_root = node
+			"operations": operations_root = node
 			"carriers": carrier_root = node
 			"scenery": scenery_root = node
 	hud = HUD.new()
+	hud.sounds = sounds
 	add_child(hud)
 	hud.tool_selected.connect(_select_tool)
 	hud.rotation_requested.connect(_rotate_building)
@@ -153,15 +171,15 @@ func _ready() -> void:
 	hud.set_campaign_controls(campaign != null)
 	hud.weather_selected.connect(func(kind,intensity): atmosphere.set_weather(kind,intensity))
 	hud.time_of_day_selected.connect(atmosphere.set_time_of_day)
-	hud.clock_toggled.connect(func(running): atmosphere.profile.day_length_minutes = 2.0 if running else 0.0)
+	hud.clock_toggled.connect(func(running): atmosphere.profile.day_length_minutes = DAY_MINUTES if running else 0.0)
 	hud.fade_selected.connect(func(seconds): atmosphere.profile.weather_transition_seconds = seconds)
 	hud.wind_selected.connect(atmosphere.set_wind)
 	hud.weather_action.connect(_weather_action)
 	hud.world_map_requested.connect(open_world_map)
 	hud.workers_toggled.connect(_toggle_workers)
-	hud.priority_selected.connect(func(level): _panel_command(sim.set_priority(selected_uid, level)))
+	hud.site_cancel_requested.connect(_cancel_site)
+	hud.pay_selected.connect(func(level): _panel_command(sim.set_pay(selected_uid, level)))
 	hud.tax_selected.connect(func(percent): _panel_command(sim.set_tax_percent(percent)))
-	hud.markup_selected.connect(func(percent): _panel_command(sim.set_markup_percent(percent)))
 	hud.reserve_target_toggled.connect(func(enabled): _panel_command(sim.set_keep_service_reserve(enabled)))
 	hud.reserve_transfer_requested.connect(func(pot,amount): _panel_command(sim.transfer_reserve(pot,amount)))
 	hud.offer_accepted.connect(func(id): _panel_command(sim.accept_offer(id)))
@@ -169,6 +187,7 @@ func _ready() -> void:
 	hud.pledge_broken.connect(func(id): _panel_command(sim.break_pledge(id)))
 	hud.sale_requested.connect(func(id): _panel_command(sim.sell_building(selected_uid,id)))
 	hud.class_overlay_toggled.connect(_toggle_class_overlay)
+	hud.operations_overlay_toggled.connect(_toggle_operations_overlay)
 	hud.food_overlay_toggled.connect(_toggle_food_overlay)
 	# Opening the food breakdown also shows the food overlay on the map.
 	hud.food_menu_opened.connect(func(): if not food_overlay.visible: _toggle_food_overlay())
@@ -183,6 +202,8 @@ func _ready() -> void:
 			site_name = argument.trim_prefix("--site=")
 		elif argument == "--scenario=economy":
 			economy_village = true
+		elif argument == "--dev":
+			hud.set_dev_tools(true)
 	if campaign != null:
 		sim = campaign.village
 		_refresh_village()
@@ -217,10 +238,12 @@ func _restart() -> void:
 		push_error("Starter failed: " + sim.last_error)
 		get_tree().quit(1)
 		return
+	# Everything the player places from here goes up as a construction site.
+	sim.construction_sites = true
 	_refresh_village()
 
 func _refresh_village() -> void:
-	for root in [buildings_root,roads_root,carrier_root,scenery_root,deposits_root,class_root,ghost_root]:
+	for root in [buildings_root,roads_root,carrier_root,scenery_root,deposits_root,class_root,operations_root,ghost_root]:
 		_clear(root)
 	building_nodes.clear()
 	carrier_nodes.clear()
@@ -236,10 +259,14 @@ func _refresh_village() -> void:
 	forage_layer.build(relief)
 	food_overlay.build(sim.grid,relief)
 	food_overlay.visible = false
+	construction.relief = relief
+	construction.reset()
 	atmosphere.reset_art_motion()
 	atmosphere.set_time_of_day(16.0)
 	atmosphere.set_weather(AtmosphereProfile.Weather.CLEAR,0.0,true)
-	atmosphere.profile.day_length_minutes = 0.0
+	# The day passes from the start; the dev weather panel can stop it.
+	atmosphere.profile.day_length_minutes = DAY_MINUTES
+	atmosphere.profile.night_minutes = NIGHT_MINUTES
 	atmosphere.wetness = 0.0
 	atmosphere.grid = sim.grid
 	atmosphere.profile.weather_transition_seconds = 8.0
@@ -247,10 +274,13 @@ func _refresh_village() -> void:
 	_build_scenery()
 	last_revision = -1
 	class_root.visible = false
+	operations_root.visible = false
+	operations_signature = ""
 	class_signature = ""
 	last_forest_revision = sim.grid.forest_revision
 	accumulator = 0
 	speed = 1
+	atmosphere.clock_scale = 1.0
 	tool.choose("inspect")
 	ghost_signature = ""
 	_sync_view()
@@ -312,10 +342,11 @@ func _process(delta: float) -> void:
 		return
 	accumulator += delta * speed
 	# Rendering can lag; accumulated fixed ticks are never discarded.
+	var tick_seconds := 1.0 / float(sim.TICKS_PER_SECOND)
 	var iterations := 0
-	while accumulator >= 0.1 and iterations < 100:
+	while accumulator >= tick_seconds and iterations < 100:
 		sim.step(1)
-		accumulator -= 0.1
+		accumulator -= tick_seconds
 		iterations += 1
 	var pan := Vector2.ZERO
 	if Input.is_physical_key_pressed(KEY_A): pan.x -= 1
@@ -333,6 +364,7 @@ func _process(delta: float) -> void:
 		hud_elapsed = 0
 		hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
 		_sync_class_overlay()
+		_sync_operations_overlay()
 		if hud.weather_menu.visible:
 			_sync_weather_hud()
 		if campaign != null:
@@ -368,6 +400,7 @@ func _sync_view() -> void:
 	wildlife_layer.sync(sim.wildlife)
 	forage_layer.sync(sim.forage)
 	food_overlay.sync(sim)
+	var finished: Array = construction.sync(sim, get_process_delta_time())
 	for building in sim.buildings.values():
 		var node: Node3D = building_nodes.get(building.uid)
 		if node != null and int(node.get_meta("tier")) != building.tier:
@@ -382,6 +415,11 @@ func _sync_view() -> void:
 			node.rotation.y = building.rotation_quarters * PI / 2.0
 			buildings_root.add_child(node)
 			building_nodes[building.uid] = node
+			# A finished site opens with a pop, a puff of dust and a chime.
+			if building.uid in finished:
+				ConstructionLayer.pop(node, Vector3(0.94, 0.7, 0.94))
+				construction.dust(node.position, Vector2(footprint))
+				sounds.play("complete")
 		factory.medieval.sync_stock(node, building)
 		if node.has_node("Sails") and building.status == "working":
 			node.get_node("Sails").rotation.z = float(sim.tick) * 0.035
@@ -542,14 +580,21 @@ func _unhandled_input(event: InputEvent) -> void:
 				hud.close_treasury_menu()
 				hud.close_factions_menu()
 				hud.close_food_menu()
+				hud.close_overlays_menu()
+				hud.close_offer_card()
 				selected_uid = -1
 				_select_tool("inspect")
 			KEY_F3:
 				_toggle_deposits()
+			KEY_F6:
+				_toggle_operations_overlay()
 			KEY_F5:
 				_toggle_class_overlay()
 			KEY_F7:
 				_toggle_food_overlay()
+			KEY_F12:
+				# Developer tools: the weather panel.
+				hud.set_dev_tools(not hud.dev_tools)
 			KEY_F4:
 				_cycle_site()
 			KEY_HOME: _overview_site()
@@ -592,7 +637,7 @@ func _apply_preview_material(node: Node, preview_material: Material) -> void:
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for child in node.get_children(): _apply_preview_material(child, preview_material)
 
-## HUD panel commands (tax, markup, reserves, priority) go through the sim's public API.
+## HUD panel commands (tax, reserves, pay) go through the sim's public API.
 func _panel_command(ok: bool) -> void:
 	if not ok: hud.show_error(sim.last_error)
 	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
@@ -649,8 +694,39 @@ func _sync_class_overlay() -> void:
 				if int(steps[cell]) + 1 <= int(row.radius):
 					factory.box(class_root,Vector3(cell.x+0.5,relief.cell_height(cell)+0.07+order*0.02,cell.y+0.5),Vector3(0.8-order*0.35,0.03,0.8-order*0.35),colour)
 
+func _toggle_operations_overlay() -> void:
+	operations_root.visible = not operations_root.visible
+	hud.set_operations_overlay_visible(operations_root.visible)
+	operations_signature = ""
+	_sync_operations_overlay()
+
+## Each workplace wears a ground plate and a marker above its roof in the
+## colour of sim.operation(): red down, yellow limited, green ready, blue
+## full. Rebuilt only when a state or the buildings change.
+func _sync_operations_overlay() -> void:
+	if not operations_root.visible:
+		return
+	var parts: Array = [sim.grid.revision]
+	for building in sim.buildings.values():
+		parts.append([building.uid,sim.operation(building)])
+	var signature := str(parts)
+	if signature == operations_signature:
+		return
+	operations_signature = signature
+	_clear(operations_root)
+	for building in sim.buildings.values():
+		var state: String = sim.operation(building)
+		if state.is_empty():
+			continue
+		var colour := Color(hud.OPERATION_COLOURS[state])
+		var footprint: Vector2i = building.footprint()
+		var centre := Vector3(building.cell.x+float(footprint.x)/2.0,relief.cell_height(building.cell),building.cell.y+float(footprint.y)/2.0)
+		factory.box(operations_root,centre+Vector3(0,0.04,0),Vector3(footprint.x+0.3,0.05,footprint.y+0.3),colour)
+		factory.box(operations_root,centre+Vector3(0,3.1,0),Vector3(0.5,0.5,0.5),colour)
+
 func _set_speed(value: int) -> void:
 	speed = value
+	atmosphere.clock_scale = value
 	hud.set_speed(value)
 
 func _act(cell: Vector2i) -> void:
@@ -664,11 +740,40 @@ func _act(cell: Vector2i) -> void:
 			if not ok: hud.show_error(sim.last_error)
 			tool.road_start = Vector2i(-1,-1)
 	elif tool.selected == "demolish":
+		var target = sim.structure(int(sim.grid.occupied.get(cell,-1)))
 		var ok: bool = sim.demolish(cell)
 		if not ok: hud.show_error(sim.last_error)
+		else:
+			sounds.play("place", 0.75)
+			if target != null: construction.dust(_footprint_centre(target), Vector2(target.footprint()))
 	else:
 		var ok: bool = sim.place(tool.selected,cell,tool.rotation_quarters)
 		if not ok: hud.show_error(sim.last_error)
+		else:
+			hud.placements += 1
+			# The plot is dug with a thunk and a puff of dust.
+			sounds.play("place")
+			var placed = sim.structure(int(sim.grid.occupied.get(cell,-1)))
+			if placed != null: construction.dust(_footprint_centre(placed), Vector2(placed.footprint()))
+	_sync_view()
+	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
+
+## The ground point at the middle of a building's or site's footprint.
+func _footprint_centre(building) -> Vector3:
+	var footprint: Vector2i = building.footprint()
+	return Vector3(building.cell.x+float(footprint.x)/2.0,relief.cell_height(building.cell),building.cell.y+float(footprint.y)/2.0)
+
+## Clears the selected construction site from its inspector.
+func _cancel_site() -> void:
+	var site = sim.sites.get(selected_uid)
+	if site == null:
+		return
+	if sim.demolish(site.cell):
+		sounds.play("place", 0.75)
+		construction.dust(_footprint_centre(site), Vector2(site.footprint()))
+	else:
+		hud.show_error(sim.last_error)
+	selected_uid = -1
 	_sync_view()
 	hud.refresh(sim,selected_uid,tool.selected,tool.rotation_quarters)
 
@@ -744,7 +849,9 @@ func _restore_campaign_view_state() -> void:
 	hud.set_deposits_visible(deposits_root.visible)
 	charter_offer_dismissed = state.get("charter_offer_dismissed", false)
 	atmosphere.set_time_of_day(state.get("time_of_day", 16.0))
-	atmosphere.profile.day_length_minutes = state.get("clock", 0.0)
+	# The clock always runs in play: older saves stored a stopped clock as the
+	# default, and stopping it is a dev-panel setting that is not kept.
+	atmosphere.profile.day_length_minutes = DAY_MINUTES
 	atmosphere.set_weather(state.get("weather", AtmosphereProfile.Weather.CLEAR), state.get("amount", 0.0), true)
 	atmosphere.profile.weather_transition_seconds = state.get("fade", 8.0)
 	atmosphere.set_wind(state.get("wind_from", 0.0), state.get("breeze", 1.0), state.get("gust_speed", 1.0))

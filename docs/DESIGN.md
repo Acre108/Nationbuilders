@@ -63,7 +63,7 @@ Six factions in three classes compete inside every settlement. [FACTIONS.md](FAC
 
 ## Art direction
 
-Stylised low-poly 3D, rendered smoothly at full display resolution with antialiasing. Buildings are Blender-authored medieval models that show their stock (sacks, barrels, sheaves). The environment is the SpacesOS foliage, lighting and atmosphere stack: natural sunlight with a golden late-afternoon default, day/night, weather, wind-driven trees and grass, and cloud shadows. The camera is orthographic, fixed at a 30–45° pitch, and rotates in 90° steps. The UI draws on a separate layer above the world.
+Stylised low-poly 3D, rendered smoothly at full display resolution with antialiasing. Buildings are Blender-authored medieval models that show their stock (sacks, barrels, sheaves). The environment is the SpacesOS foliage, lighting and atmosphere stack: natural sunlight with a golden late-afternoon default, day/night, weather, wind-driven trees and grass, and cloud shadows. The camera is orthographic, fixed at a 30–45° pitch, and rotates in 90° steps. The UI draws on a separate layer above the world and follows [UI.md](UI.md): one fact per line, explanations in tooltips, and anything the player can't act on under a Details fold.
 
 *Changed 11 Oct 2026:* the original pixel-art pipeline (a 640×360 viewport with nearest-neighbour upscaling, 1 px outlines, banded toon lighting and a 32–48 colour palette LUT) is dropped. Smooth rendering is the long-term look. *Changed 14 Oct 2026:* the remaining optional pixel view and the disconnected pixel shaders have been removed. [ART_DIRECTION.md](ART_DIRECTION.md) sets the direction for new assets; [VILLAGE_ART.md](VILLAGE_ART.md) records the current look and its tuning.
 

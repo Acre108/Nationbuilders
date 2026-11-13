@@ -73,11 +73,16 @@ static func _starter_roads(sim) -> bool:
 		roads.append(Vector2i(20, y) + shift)
 	return sim.place_road(roads)
 
+## Layouts are founded already built, never as construction sites.
 static func _place_all(sim, entries: Array) -> bool:
+	var sites: bool = sim.construction_sites
+	sim.construction_sites = false
 	for entry in entries:
 		if not sim.place(entry[0], entry[1] + offset(sim)):
 			sim.last_error = "%s at %s: %s" % [entry[0], entry[1], sim.last_error]
+			sim.construction_sites = sites
 			return false
+	sim.construction_sites = sites
 	return true
 
 ## Every building of the economy test village, in placement order. Placement

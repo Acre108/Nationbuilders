@@ -173,7 +173,10 @@ func restore_view_state(state: Dictionary) -> void:
 	if typeof(state.get("reveal_all")) == TYPE_BOOL: reveal_all = state.reveal_all
 	if typeof(state.get("show_settleability")) == TYPE_BOOL: show_settleability = state.show_settleability
 	if state.get("time_of_day") is float: atmosphere.set_time_of_day(state.time_of_day)
-	if state.get("clock") is float: atmosphere.profile.day_length_minutes = state.clock
+	if state.get("clock") is float:
+		# The village's nights are a third of its day; the map keeps that rhythm.
+		atmosphere.profile.day_length_minutes = state.clock
+		atmosphere.profile.night_minutes = state.clock / 3.0
 	if state.get("weather") is int and state.get("amount") is float:
 		atmosphere.set_weather(clampi(state.weather, 0, 4), clampf(state.amount, 0, 1), true)
 	if state.get("wind_from") is float and state.get("breeze") is float and state.get("gust_speed") is float:

@@ -3,8 +3,9 @@ extends SceneTree
 ## §5.7) headless and prints its money and goods once per minute, then a
 ## summary and a findings list. Headless:
 ##   Godot.exe --headless --path . --script tools/economy_village.gd -- [--minutes=30] [--seed=73]
-##       [--tax=PERCENT] [--markup=PERCENT] [--reserve] [--halls] [--every=N] [--data=res://data]
-## --reserve keeps two paydays of services reserved; --halls adds the union
+##       [--tax=PERCENT] [--store-pay=low|normal|high] [--no-reserve] [--halls] [--every=N] [--data=res://data]
+## --store-pay sets every storehouse's pay, and so its markup; --no-reserve stops
+## keeping two paydays of services reserved; --halls adds the union
 ## hall and alehouse; --data loads content from another directory.
 const Sim = preload("res://sim/village_sim.gd")
 const Scenario = preload("res://sim/scenario.gd")
@@ -39,11 +40,14 @@ func _run() -> void:
 		return
 	for argument in args:
 		if argument.begins_with("--tax=") and not sim.set_tax_percent(int(argument.get_slice("=", 1))): printerr(sim.last_error)
-		elif argument.begins_with("--markup=") and not sim.set_markup_percent(int(argument.get_slice("=", 1))): printerr(sim.last_error)
-	if "--reserve" in args: sim.set_keep_service_reserve(true)
+		elif argument.begins_with("--store-pay="):
+			var level: int = ["low", "normal", "high"].find(argument.get_slice("=", 1))
+			for building in sim.buildings.values():
+				if building.definition.kind == "storehouse" and not sim.set_pay(building.uid, level): printerr(sim.last_error)
+	if "--no-reserve" in args: sim.set_keep_service_reserve(false)
 	var initial_goods := {}
 	for good in sim.db.goods: initial_goods[good] = sim.stock(good)
-	print("Economy village: %d buildings, %d houses, %d jobs + %d carriers for %d workers; tax %d%%, markup %d%%; treasury after building %s" % [sim.buildings.size(), _count(sim, "house"), _jobs(sim), _carriers(sim), sim.workforce(), sim.tax_percent, sim.markup_percent, Economy.format(sim.treasury)])
+	print("Economy village: %d buildings, %d houses, %d jobs + %d carriers for %d workers; tax %d%%, average markup %d%%; treasury after building %s" % [sim.buildings.size(), _count(sim, "house"), _jobs(sim), _carriers(sim), sim.workforce(), sim.tax_percent, sim.average_markup(), Economy.format(sim.treasury)])
 	print("Money per minute is summed over its three paydays. Purses are household savings: mean / lowest.")
 	print("min | T1 T2 happy morale idle | treasury  pub    | tax  trade pubpay unpaid build | wages/house | purse mean/low | stores        | " + " ".join(_goods(sim).map(func(good): return good.left(5).rpad(5))))
 	var totals := _blank()

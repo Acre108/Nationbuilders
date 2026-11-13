@@ -19,6 +19,9 @@ func _run() -> void:
 	root.add_child(view)
 	await process_frame
 	view._set_speed(0)
+	check(view.sim.construction_sites, "Play places construction sites")
+	# Most checks test finished buildings; _check_construction() turns sites on.
+	view.sim.construction_sites = false
 	check(view.sim.grid.width == 100 and view.sim.grid.height == 100, "Playable default map is 100 by 100")
 	check(view.camera.bounds.end == Vector2(95,95), "Camera bounds cover the expanded default map")
 	var starting_focus: Vector3 = view.camera.focus
@@ -27,22 +30,33 @@ func _run() -> void:
 	view.camera.focus = starting_focus
 	view.camera.refresh()
 	check(view.sim.buildings.size() == 5, "Playable starter has five buildings")
-	check(view.hud.bottom.get_child(0).get_child_count() == 3, "Play screen has exactly three bottom actions")
+	var bottom_buttons: Array = view.hud.bottom.get_child(0).get_children().filter(func(node): return node is Button)
+	check(bottom_buttons.size() == 6 and view.hud.overlays_button in bottom_buttons and view.hud.speed_buttons[3] in bottom_buttons, "Bottom bar holds speed, Build, Overlays and Demolish")
+	check(not view.hud.sun_button.visible, "The weather panel's sun button is a developer tool, hidden by default")
 	check(not view.hud.side.visible and not view.hud.build_menu.visible and not view.hud.toast.visible, "Start has no persistent text panels")
 	check(not view.hud.blocks_mouse(Vector2(640,40)), "Top of play screen is unobstructed")
 	var bar: Rect2 = view.hud.stock_bar.get_global_rect()
-	check(view.hud.stock_bar.visible and view.hud.stock_label.text.begins_with("Storehouse ") and " / 330" in view.hud.stock_label.text and "Bread" in view.hud.stock_label.text, "Stock bar shows storehouse fill and key stocks (%s)" % view.hud.stock_label.text)
-	check(bar.position.x >= view.hud.treasury_button.get_global_rect().end.x and bar.end.x < view.hud.map_button.get_global_rect().position.x, "Stock bar sits between the gold counter and the top-right buttons")
+	var chips: Dictionary = view.hud.resource_chips
+	check(view.hud.stock_bar.visible and chips.keys() == ["water","fuel","materials","ingredients","storage","workers"] and view.hud.stock_bar.is_ancestor_of(view.hud.food_button), "The top bar shows food, water, fuel, materials, ingredients, storage and workers")
+	check(chips.workers[1].text == "%d/%d" % [view.sim.workforce() - view.sim.idle_workers, view.sim.workforce()] and "Dependents" in chips.workers[0].tooltip_text, "The worker chip shows adults in work of all, with dependents on hover (%s)" % chips.workers[0].tooltip_text.replace("
+"," | "))
+	check(chips.materials[1].text == str(view.sim.stock("logs") + view.sim.stock("planks")) and "Logs" in chips.materials[0].tooltip_text and "Planks" in chips.materials[0].tooltip_text, "A category shows its total and breaks it down on hover (%s)" % chips.materials[0].tooltip_text.replace("\n"," | "))
+	check("Berries" in view.hud.food_button.tooltip_text and "/" in chips.storage[1].text, "The food chip lists each food; storage shows its fill")
+	var top_right: float = view.hud.factions_button.get_global_rect().position.x if view.hud.factions_button.visible else view.hud.map_button.get_global_rect().position.x
+	check(bar.position.x >= view.hud.treasury_button.get_global_rect().end.x and bar.end.x < top_right, "The top bar sits between the gold counter and the top-right buttons")
+	# The first input of the run needs the GUI settled first.
+	await process_frame
+	await process_frame
+	await _click(view.hud.speed_buttons[3].get_global_rect().get_center())
+	check(view.speed == 3 and view.hud.speed_buttons[3].button_pressed, "Bottom bar sets triple simulation speed (speed %d, pressed %s, blocked %s)" % [view.speed, str(view.hud.speed_buttons[3].button_pressed), str(view.hud.speed_buttons[3].get_global_rect())])
+	await _click(view.hud.speed_buttons[1].get_global_rect().get_center())
+	check(view.speed == 1 and not view.hud.speed_buttons[3].button_pressed, "Bottom bar switches speed selection exclusively")
+	await _click(view.hud.speed_buttons[0].get_global_rect().get_center())
+	check(view.speed == 0 and view.hud.speed_buttons[0].button_pressed, "Bottom bar pauses simulation")
 	await _click(view.hud.cog_button.get_global_rect().get_center())
 	check(view.hud.options_menu.visible and view.hud.cog_button.button_pressed, "Top-right cog opens options")
 	await _click_cell(_cell(21,21))
 	check(view.selected_uid == -1, "Options block clicks on buildings behind menu")
-	await _click(view.hud.speed_buttons[3].get_global_rect().get_center())
-	check(view.speed == 3 and view.hud.speed_buttons[3].button_pressed, "Options set triple simulation speed")
-	await _click(view.hud.speed_buttons[1].get_global_rect().get_center())
-	check(view.speed == 1 and not view.hud.speed_buttons[3].button_pressed, "Options switch speed selection exclusively")
-	await _click(view.hud.speed_buttons[0].get_global_rect().get_center())
-	check(view.speed == 0, "Options pause simulation")
 	check(view.display.material == null, "Village display has no palette post-processing material")
 	check(view.factory.material.shader.resource_path == "res://render/world.gdshader", "Old meshes use the environment-lit world material")
 	var option_labels: Array[String] = []
@@ -75,8 +89,10 @@ func _run() -> void:
 	await _click(view.hud.cog_button.get_global_rect().get_center())
 	await _click(view.hud.restart_button.get_global_rect().get_center())
 	check(view.sim.tick <= 1 and view.sim.buildings.size() == 5 and not view.hud.options_menu.visible, "Options restart resets village and closes menu")
+	view.sim.construction_sites = false
 	view._set_speed(0)
-	check(view.hud.sun_button.position.x < view.hud.cog_button.position.x, "Sun button sits left of the cog")
+	await _key(KEY_F12)
+	check(view.hud.sun_button.visible and view.hud.sun_button.position.x < view.hud.cog_button.position.x and view.hud.map_button.position.x < view.hud.sun_button.position.x, "F12 shows the sun button left of the cog")
 	await _click(view.hud.sun_button.get_global_rect().get_center())
 	check(view.hud.weather_menu.visible and view.hud.sun_button.button_pressed, "Sun button opens weather panel")
 	check(view.hud.weather_buttons[AtmosphereProfile.Weather.CLEAR].button_pressed and not view.hud.intensity_slider.editable, "Weather panel starts on clear with intensity locked")
@@ -86,8 +102,9 @@ func _run() -> void:
 	check(is_equal_approx(view.atmosphere.get_target_amount(),0.3), "Intensity slider drives weather intensity")
 	view.hud.time_slider.value = 20.0
 	check(is_equal_approx(view.atmosphere.get_time_of_day(),20.0) and view.hud.slider_values[view.hud.time_slider].text == "20:00", "Time slider sets time of day")
+	check(view.hud.clock_button.button_pressed and view.atmosphere.profile.day_length_minutes > 0.0, "The clock runs by default")
 	await _click(view.hud.clock_button.get_global_rect().get_center())
-	check(view.atmosphere.profile.day_length_minutes > 0.0, "Run clock starts the day passing")
+	check(view.atmosphere.profile.day_length_minutes == 0.0, "Run clock toggle stops the day")
 	view.hud.wind_from_slider.value = 90.0
 	var wind_to: Vector2 = view.atmosphere.art.wind_direction
 	check(wind_to.x < -0.99 and view.foliage.profile.wind_direction.is_equal_approx(wind_to), "Wind from east blows west in art and foliage")
@@ -116,6 +133,8 @@ func _run() -> void:
 	await _click(view.hud.sun_button.get_global_rect().get_center())
 	await _key(KEY_ESCAPE)
 	check(not view.hud.weather_menu.visible and not view.hud.sun_button.button_pressed, "Escape closes weather panel")
+	await _key(KEY_F12)
+	check(not view.hud.sun_button.visible and view.hud.map_button.position.x == view.hud.cog_button.position.x - 56, "F12 hides the developer tools again")
 	view.atmosphere.set_weather(AtmosphereProfile.Weather.CLEAR,0.0,true)
 	view.atmosphere.set_time_of_day(14.0)
 	view.atmosphere.profile.day_length_minutes = 0.0
@@ -154,8 +173,8 @@ func _run() -> void:
 	check("Treasury pays" in well_card, "Selected building shows what the treasury pays to build it")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/placement-card.png")
-	await _click_cell(_cell(15,24))
-	check(view.sim.grid.occupied.has(_cell(15,24)), "Toolbar + world click places well")
+	await _check_construction()
+	check(view.sim.grid.occupied.has(_cell(15,24)), "Toolbar + world click places well (%s)" % view.sim.last_error)
 	var count: int = view.sim.buildings.size()
 	await _click_cell(_cell(15,24))
 	check(view.sim.buildings.size() == count and not view.sim.last_error.is_empty(), "Invalid placement gives feedback without mutation")
@@ -163,11 +182,17 @@ func _run() -> void:
 	await _click_cell(_cell(15,24))
 	check(view.selected_uid == view.sim.grid.occupied.get(_cell(15,24)) and view.hud.side.visible, "Click opens detailed building inspector")
 	var production_info: String = view.hud.inspector.get_parsed_text()
-	check("Recipe" in production_info and "Input" in production_info and "Output" in production_info and "Workers" in production_info and "Cycle" in production_info, "Production inspector exposes recipe, slots, workforce and cycle")
+	check("Makes" in production_info and "Has" in production_info and "Workers" in production_info and view.hud.inspection_progress.visible and view.hud.pay_row.visible, "Production inspector leads with output, stock, workers, cycle and pay")
+	check(not "Footprint" in production_info and not "Facing" in production_info and not "Owner" in production_info, "Position and owner wait under Details")
 	view.sim.step(1)
 	view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
-	var staffed_info: String = view.hud.inspector.get_parsed_text()
-	check(not view.sim.buildings[view.selected_uid].staffed or ("Families" in staffed_info and "Homestead" in staffed_info), "Production inspector names the families its workers come from")
+	var staffed_info: String = view.hud.details_text.get_parsed_text()
+	check(not view.sim.buildings[view.selected_uid].staffed or ("Families" in staffed_info and "Homestead" in staffed_info), "Details name the families its workers come from")
+	check(not view.hud.details_text.visible, "Details start folded")
+	await _click(view.hud.details_button.get_global_rect().get_center())
+	check(view.hud.details_text.visible and view.hud.details_button.button_pressed, "The Details button unfolds them")
+	await _click(view.hud.details_button.get_global_rect().get_center())
+	check(not view.hud.details_text.visible, "and folds them again")
 	await _click(view.hud.close_inspector.get_global_rect().get_center())
 	check(not view.hud.side.visible and view.selected_uid == -1, "Inspection close button clears selection")
 	await _click(view.hud.demolish_button.get_global_rect().get_center())
@@ -175,10 +200,16 @@ func _run() -> void:
 	check(not view.sim.grid.occupied.has(_cell(15,24)), "Demolish tool removes placed building")
 	await _click(view.hud.demolish_button.get_global_rect().get_center())
 	check(view.tool.selected == "inspect", "Demolish button toggles back to inspection")
+	await _click(view.hud.overlays_button.get_global_rect().get_center())
+	check(view.hud.overlays_menu.visible and view.hud.overlays_menu.get_global_rect().end.y < view.hud.bottom.get_global_rect().position.y, "Overlays button opens its menu above the bottom bar")
 	await _click(view.hud.deposits_button.get_global_rect().get_center())
-	check(view.deposits_root.visible and view.hud.deposits_button.button_pressed, "Deposits button shows overlay")
+	check(view.deposits_root.visible and view.hud.deposits_button.button_pressed, "Deposits toggle shows overlay")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/overlays-menu.png")
 	await _click(view.hud.deposits_button.get_global_rect().get_center())
-	check(not view.deposits_root.visible, "Deposits button hides overlay")
+	check(not view.deposits_root.visible, "Deposits toggle hides overlay")
+	await _key(KEY_ESCAPE)
+	check(not view.hud.overlays_menu.visible, "Escape closes the overlays menu")
 	await _click(view.hud.build_button.get_global_rect().get_center())
 	await _key(KEY_ESCAPE)
 	check(not view.hud.build_menu.visible, "Escape closes build menu")
@@ -195,14 +226,19 @@ func _run() -> void:
 	await _key(KEY_F3)
 	view._restart()
 	view._set_speed(0)
+	view.sim.construction_sites = false
 	view.sim.step(300)
 	view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	check(not view.hud.build_buttons.mill.disabled and not view.hud.build_buttons.bakery.disabled, "House upgrade unlocks mill and bakery in menu")
 	await _click_cell(_cell(21,21))
 	var house_info: String = view.hud.inspector.get_parsed_text()
-	check("Tier 2" in house_info and "Needs" in house_info and "Bread" in house_info and "Family" in house_info and "working adult" in house_info and ("Jobs" in house_info or "no wages" in house_info), "House inspector shows current tier, needs, its family and their jobs")
-	check("Happiness" in house_info and "Pantry" in house_info and "Savings" in house_info and "Wage" in house_info and not view.hud.workers_button.visible, "House inspector shows happiness, pantry and household money, with no workers switch")
+	var house_details: String = view.hud.details_text.get_parsed_text()
+	check("tier 2" in house_info and "Needs" in house_info and "Family" in house_info and "adult" in house_info and ("Jobs" in house_info or "no wages" in house_info), "House inspector shows current tier, needs, its family and their jobs")
+	check("Happiness" in house_info and "Savings" in house_info and not view.hud.workers_button.visible and not view.hud.pay_row.visible, "House inspector shows happiness and savings, with no workers switch or pay")
+	check("Pantry" in house_details and "wage" in house_details and "Bread" in house_details and "Settled happiness" in house_details, "House details hold the pantry, wages, prices and settled happiness")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/inspection-house.png")
 	await _key(KEY_ESCAPE)
 	await _choose_build("mill")
 	await _click_cell(_cell(16,18))
@@ -225,9 +261,13 @@ func _run() -> void:
 	check(colors.size() > 32, "Rendered world retains more than the old 32-colour palette (actual %d)" % colors.size())
 	await _click_cell(_cell(23,18))
 	check(view.hud.inspector_title.text == "Bakery" and view.hud.inspection_progress.visible, "Bakery inspection includes cycle progress bar")
-	var bakery_info: String = view.hud.inspector.get_parsed_text()
-	check("Sells" in bakery_info and "Purse" in bakery_info, "Workshop inspector shows its price and purse")
+	var bakery_info: String = view.hud.details_text.get_parsed_text()
+	check("Sells" in bakery_info and "Purse" in bakery_info, "Workshop details show its price and purse")
 	var bakery = view.sim.buildings[view.selected_uid]
+	await _click(view.hud.pay_buttons[2].get_global_rect().get_center())
+	check(bakery.pay == 2 and view.hud.pay_buttons[2].button_pressed and "from the treasury" in view.hud.pay_hint.text, "Pay buttons raise a workplace's pay and say who pays (%s)" % view.hud.pay_hint.text)
+	await _click(view.hud.pay_buttons[1].get_global_rect().get_center())
+	check(bakery.pay == 1, "and set it back to normal")
 	await _click(view.hud.workers_button.get_global_rect().get_center())
 	check(not bakery.workers_enabled and view.hud.workers_button.text == "Resume workers", "Inspector button stops a building's workers")
 	await _click(view.hud.workers_button.get_global_rect().get_center())
@@ -236,8 +276,12 @@ func _run() -> void:
 	root.get_texture().get_image().save_png("res://artifacts/inspection-bakery.png")
 	await _click_cell(_cell(17,21))
 	var storage_info: String = view.hud.inspector.get_parsed_text()
-	check("Storage" in storage_info and "Carriers" in storage_info and "Bread" in storage_info and "treasury" in storage_info, "Storehouse inspector exposes inventory, carrier activity and the treasury")
-	check("Storekeeper" in storage_info and "needs a middle-class family" in storage_info, "Storehouse inspector says its storekeeper's job needs a middle-class family")
+	check("Stored" in storage_info and "carriers" in storage_info and "Holds" in view.hud.details_text.get_parsed_text(), "Storehouse inspector shows carriers and fill, with the goods in Details")
+	check("storekeeper" in storage_info.to_lower() and "needs a middle-class family" in storage_info, "Storehouse inspector says its storekeeper's job needs a middle-class family")
+	var store = view.sim.buildings[view.selected_uid]
+	await _click(view.hud.pay_buttons[2].get_global_rect().get_center())
+	check(store.pay == 2 and Economy.markup(store) == 20 and "Markup 20%" in view.hud.pay_hint.text, "A storehouse's pay is its markup")
+	await _click(view.hud.pay_buttons[1].get_global_rect().get_center())
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/inspection-storehouse.png")
 	await _key(KEY_ESCAPE)
@@ -245,6 +289,52 @@ func _run() -> void:
 	await _check_building_rotation()
 	print("HEARTHLANDS VIEW: %d checks, %d failures" % [checks,failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+## docs/CONSTRUCTION.md: a click lays out a site with a thunk and dust; its
+## inspector shows the materials and Cancel; carriers fill its pile, the
+## building rises and opens with a pop and a chime.
+func _check_construction() -> void:
+	view.sim.construction_sites = true
+	# Join the new road to the village so carriers can reach the site.
+	check(view.sim.place_road([_cell(16,22),_cell(16,21)]), "A road joins the new strip to the main road (%s)" % view.sim.last_error)
+	var logs: int = view.sim.stock("logs")
+	await _click_cell(_cell(15,24))
+	var uid: int = view.sim.grid.occupied.get(_cell(15,24),-1)
+	check(view.sim.sites.has(uid) and not view.sim.buildings.has(uid), "A click lays out a construction site (%s)" % view.sim.last_error)
+	check(view.sim.available("logs") == logs - 3 and logs >= 3, "The site's logs are promised to it (%d logs in stock, %d free, reserve %d, error %s)" % [logs, view.sim.available("logs"), view.sim.reserve.count("logs"), view.sim.last_error])
+	check(view.construction.nodes.has(uid) and view.construction.nodes[uid].get_node("Blueprint").visible, "The site shows its plot and a blueprint of the building")
+	check(view.construction.get_children().any(func(node): return node is CPUParticles3D), "Placing raises a puff of dust")
+	check(view.sounds.last_played.has("place"), "Placing plays a thunk")
+	await _key(KEY_ESCAPE)
+	await _click_cell(_cell(15,24))
+	var site_info: String = view.hud.inspector.get_parsed_text()
+	check(view.hud.side.visible and view.hud.inspector_title.text == "Well" and "Waiting for materials" in site_info and "Logs" in site_info and view.hud.cancel_site_button.visible and not view.hud.pay_row.visible, "The site inspector shows what it waits for, its materials and Cancel (%s)" % site_info.replace("\n"," | "))
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/construction-site.png")
+	var rising := false
+	for index in 600:
+		view.sim.step(1)
+		view._sync_view()
+		var site = view.sim.sites.get(uid)
+		if site == null:
+			break
+		if site.status == "building" and site.progress > view.sim.build_ticks(site.definition) / 2 and not rising:
+			rising = true
+			view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
+			await process_frame
+			check("Building" in view.hud.inspector.get_parsed_text() and view.construction.nodes[uid].get_node("Rising").visible, "Once supplied the site builds, and the building rises")
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png("res://artifacts/construction-rising.png")
+	var stuck = view.sim.sites.get(uid)
+	check(rising and view.sim.buildings.has(uid), "The well is finished%s" % ("" if stuck == null else " (stuck %s with %s, %d logs available, tick %d)" % [stuck.status, str(stuck.materials.items), view.sim.available("logs"), view.sim.tick]))
+	check(not view.construction.nodes.has(uid) and view.building_nodes.has(uid), "The finished building replaces its site")
+	check(view.sounds.last_played.has("complete") and view.sounds.last_played.has("deliver"), "Deliveries knock and the finish chimes")
+	view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
+	await process_frame
+	check(view.hud.inspector_title.text == "Well" and not view.hud.cancel_site_button.visible and view.hud.pay_row.visible, "The inspector turns into the well's")
+	await _key(KEY_ESCAPE)
+	await _choose_build("well")
+	view.sim.construction_sites = false
 
 ## VILLAGERS.md 5.1-5.2: the gold counter opens the Treasury panel, whose
 ## buttons set tax and move gold between free and reserved through real input.
@@ -255,7 +345,8 @@ func _check_treasury() -> void:
 	check(counter.position.x < 40 and counter.end.x < view.hud.map_button.get_global_rect().position.x and not view.hud.blocks_mouse(Vector2(640,40)), "Gold counter sits top left and leaves the top centre clear")
 	await _click(counter.get_center())
 	await process_frame
-	check(view.hud.treasury_menu.visible and view.hud.treasury_button.button_pressed and view.hud.treasury_total.text == Economy.format(sim.treasury), "Gold counter opens the Treasury panel")
+	check(view.hud.treasury_menu.visible and view.hud.treasury_button.button_pressed, "Gold counter opens the Treasury panel")
+	check(not view.hud.reserves_box.visible, "Reserves start folded away")
 	check(view.hud.blocks_mouse(view.hud.treasury_menu.get_global_rect().get_center()), "Treasury panel blocks clicks on the world behind it")
 	var tax: int = sim.tax_percent
 	await _click(view.hud.tax_buttons[Economy.TAX_STEP].get_global_rect().get_center())
@@ -264,23 +355,24 @@ func _check_treasury() -> void:
 		await _click(view.hud.tax_buttons[-Economy.TAX_STEP].get_global_rect().get_center())
 	check(sim.tax_percent == 0 and view.hud.tax_buttons[-Economy.TAX_STEP].disabled, "Treasury panel lowers tax to zero, then stops")
 	sim.set_tax_percent(tax)
-	var markup: int = sim.markup_percent
-	await _click(view.hud.markup_buttons[Economy.TAX_STEP].get_global_rect().get_center())
-	check(sim.markup_percent == markup + Economy.TAX_STEP and view.hud.markup_value.text == "%d%%" % sim.markup_percent, "Treasury panel raises the storehouse markup through real input")
-	await _click(view.hud.markup_buttons[-Economy.TAX_STEP].get_global_rect().get_center())
-	check(sim.markup_percent == markup, "Treasury panel lowers the storehouse markup")
+	await _click(view.hud.reserves_button.get_global_rect().get_center())
+	await process_frame
+	check(view.hud.reserves_box.visible and view.hud.keep_reserve_button.button_pressed, "Reserves unfold, with services kept reserved by default")
+	sim.set_keep_service_reserve(false)
 	var free: int = Economy.free_gold(sim)
 	await _click(view.hud.reserve_buttons.public[Economy.SILVER_PER_GOLD].get_global_rect().get_center())
 	check(sim.public_reserve == mini(Economy.SILVER_PER_GOLD,free) and view.hud.treasury_values.public.text == Economy.format(sim.public_reserve), "Treasury panel sets gold aside for public pay")
 	await _click(view.hud.reserve_buttons.capital[Economy.SILVER_PER_GOLD].get_global_rect().get_center())
 	check(sim.capital_reserve > 0 and Economy.free_gold(sim) == free - sim.public_reserve - sim.capital_reserve and view.hud.treasury_values.free.text == Economy.format(Economy.free_gold(sim)), "Treasury panel sets gold aside for construction")
 	var panel_text: String = view.hud.treasury_ledger.get_parsed_text()
-	check("frustration" in panel_text and "Services" in panel_text, "Treasury panel reports services and public workers' frustration")
+	check("Services" in panel_text and (sim.public_frustration > 0) == ("frustration" in panel_text), "Treasury panel reports services, and frustration only when there is some")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/treasury-panel.png")
 	await _click(view.hud.reserve_buttons.public[-Economy.SILVER_PER_GOLD].get_global_rect().get_center())
 	await _click(view.hud.reserve_buttons.capital[-Economy.SILVER_PER_GOLD].get_global_rect().get_center())
 	check(sim.public_reserve == 0 and sim.capital_reserve == 0 and Economy.free_gold(sim) == free, "Treasury panel returns reserved gold to free gold")
+	sim.set_keep_service_reserve(true)
+	await _click(view.hud.reserves_button.get_global_rect().get_center())
 	await _click(view.hud.cog_button.get_global_rect().get_center())
 	check(view.hud.options_menu.visible and not view.hud.treasury_menu.visible and not view.hud.treasury_button.button_pressed, "Options and treasury panels are exclusive")
 	await _key(KEY_ESCAPE)
@@ -297,10 +389,8 @@ func _check_factions() -> void:
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	await process_frame
-	check(hud.faction_chips.keys() == sim.factions.coffers.keys() and not hud.faction_chips.has("union"), "Chips show the factions present at founding (%s)" % ", ".join(hud.faction_chips.keys()))
-	var counter: Rect2 = hud.treasury_button.get_global_rect()
-	var chips: Rect2 = hud.faction_bar.get_global_rect()
-	check(hud.faction_bar.visible and chips.position.y >= counter.end.y and chips.position.x < 40 and not hud.blocks_mouse(Vector2(640,40)), "Faction chips sit under the gold counter")
+	check(hud.factions_button.visible and "Aristocrats" in hud.factions_button.tooltip_text and not "Trade unions" in hud.factions_button.tooltip_text, "The Factions button lists the factions present at founding (%s)" % hud.factions_button.tooltip_text.replace("\n"," | "))
+	check(hud.factions_button.position.x < hud.map_button.position.x and hud.factions_button.position.y == hud.map_button.position.y and not hud.blocks_mouse(Vector2(640,40)), "The Factions button sits with the top-right buttons")
 	var house = null
 	var farm = null
 	for building in sim.buildings.values():
@@ -311,27 +401,46 @@ func _check_factions() -> void:
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	await process_frame
-	check(hud.faction_chips.has("union") and hud.faction_chips.has("populist"), "Union and populist chips appear when they arrive")
+	check("Trade unions" in hud.factions_button.tooltip_text and "Populists" in hud.factions_button.tooltip_text, "Unions and populists join the Factions button when they arrive")
 	for id in ["gentry","union","middle"]:
 		sim.factions.coffers[id] = int(sim.factions.coffers[id]) + 1000
 		sim.outside_money += 1000
-	await _click(hud.faction_chips.gentry.get_global_rect().get_center())
-	check(hud.factions_menu.visible and hud.blocks_mouse(hud.factions_menu.get_global_rect().get_center()), "A chip opens the Factions panel, which blocks the world behind it")
-	check("Crown" in hud.power_legend.get_parsed_text() and "Unaligned" in hud.power_legend.get_parsed_text() and hud.power_segments.has("crown"), "The panel shows the power bar")
-	check("Aristocrats" in hud.faction_text.get_parsed_text() and "Favour" in hud.faction_text.get_parsed_text(), "The panel lists each faction's favour")
+	await _click(hud.factions_button.get_global_rect().get_center())
+	check(hud.factions_menu.visible and hud.blocks_mouse(hud.factions_menu.get_global_rect().get_center()), "The Factions button opens the panel, which blocks the world behind it")
+	check(hud.power_segments.has("crown") and hud.power_segments.has("unaligned") and "Crown" in hud.power_segments.crown.tooltip_text, "The panel shows the power bar, named in its tooltips")
+	var rows: String = hud.faction_text.get_parsed_text()
+	check("Aristocrats" in rows and "favour" in rows and not "coffers" in rows and rows.count("\n") == sim.factions.coffers.size() - 1, "The panel lists each faction on one row")
+	hud.faction_text.meta_clicked.emit("gentry")
+	check("coffers" in hud.faction_text.get_parsed_text(), "A faction's row opens to show what moves its favour")
+	hud.faction_text.meta_clicked.emit("gentry")
 	var bid := _offer(sim,"gentry","bid")
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	await process_frame
-	check(not bid.is_empty() and hud.offer_buttons.has("gentry"), "An open offer shows as a card")
+	var alert = hud.offer_alerts_by_id.get("gentry")
+	check(not bid.is_empty() and alert != null and alert.visible and alert.get_global_rect().position.x < 40 and not hud.offer_card.visible, "An open offer shows as an alert on the left edge")
+	# Two thirds of its life left, without moving the village on.
+	sim.factions.offers.gentry.expires = sim.tick + 2 * sim.PAYDAY_TICKS
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	check(alert != null and is_equal_approx(alert.left, 2.0 / 3.0), "The alert's clock counts down to the offer lapsing (%.2f left)" % (alert.left if alert != null else -1.0))
+	if alert != null:
+		await _click(alert.get_global_rect().get_center())
+		await process_frame
+	check(hud.offer_card.visible and hud.offer_buttons.has("gentry") and "Aristocrats" in hud.offer_title.text and "Lapses in" in hud.offer_text.get_parsed_text(), "Clicking the alert opens its card")
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/offer-alert.png")
 	if hud.offer_buttons.has("gentry"):
 		await _click(hud.offer_buttons.gentry.accept.get_global_rect().get_center())
 		check(sim.buildings[int(bid.uid)].owner == "gentry" and sim.factions.offers.gentry.is_empty(), "Accept sells the building through real input")
+	hud.refresh(sim,view.selected_uid,view.tool.selected)
+	check(not hud.offer_alerts_by_id.has("gentry") and not hud.offer_card.visible, "An answered offer's alert and card go")
 	var pledge := _offer(sim,"middle","pledge")
 	var favour: int = sim.factions.favour.middle
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	await process_frame
+	if hud.offer_alerts_by_id.has("middle"):
+		await _click(hud.offer_alerts_by_id.middle.get_global_rect().get_center())
 	if not pledge.is_empty() and hud.offer_buttons.has("middle"):
 		await _click(hud.offer_buttons.middle.decline.get_global_rect().get_center())
 	check(not pledge.is_empty() and sim.factions.offers.middle.is_empty() and sim.factions.favour.middle == favour - 5, "Decline closes an offer through real input")
@@ -340,6 +449,8 @@ func _check_factions() -> void:
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	await process_frame
+	if hud.offer_alerts_by_id.has("union"):
+		await _click(hud.offer_alerts_by_id.union.get_global_rect().get_center())
 	if not cap.is_empty() and hud.offer_buttons.has("union"):
 		await _click(hud.offer_buttons.union.accept.get_global_rect().get_center())
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
@@ -357,7 +468,7 @@ func _check_factions() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/treasury-pledged.png")
 	await _key(KEY_ESCAPE)
-	await _click(hud.faction_chips.union.get_global_rect().get_center())
+	await _click(hud.factions_button.get_global_rect().get_center())
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
 	await process_frame
 	await process_frame
@@ -369,17 +480,17 @@ func _check_factions() -> void:
 	check(not hud.factions_menu.visible, "Escape closes the Factions panel")
 	await _click_cell(farm.cell)
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
-	check(view.selected_uid == farm.uid and hud.sale_button.visible and "The Crown" in hud.inspector.get_parsed_text(), "A Crown field shows its owner and Offer for sale")
+	check(view.selected_uid == farm.uid and hud.sale_button.visible and "The Crown" in hud.details_text.get_parsed_text(), "A Crown field shows its owner and Offer for sale")
 	await _click(hud.sale_button.get_global_rect().get_center())
 	await process_frame
 	check(hud.sale_list.visible and hud.sale_buttons.has("gentry"), "Offer for sale lists the buyers' bids")
 	if hud.sale_buttons.has("gentry"):
 		await _click(hud.sale_buttons.gentry.get_global_rect().get_center())
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
-	check(farm.owner == "gentry" and not hud.sale_button.visible and "Aristocrats" in hud.inspector.get_parsed_text(), "The sale button sells through real input")
+	check(farm.owner == "gentry" and not hud.sale_button.visible and "Aristocrats" in hud.details_text.get_parsed_text(), "The sale button sells through real input")
 	await _click_cell(house.cell)
 	hud.refresh(sim,view.selected_uid,view.tool.selected)
-	check(view.selected_uid == house.uid and "Working class" in hud.inspector.get_parsed_text() and "rent" in hud.inspector.get_parsed_text(), "A Villager house shows its class, alignment and landlord")
+	check(view.selected_uid == house.uid and "Working class" in hud.details_text.get_parsed_text() and "rent" in hud.details_text.get_parsed_text(), "A Villager house shows its class, alignment and landlord")
 	await _key(KEY_ESCAPE)
 	# A union hall and a union house, so the overlay has reach and colour to show.
 	var unlocked: int = sim.unlocked_tier
@@ -392,16 +503,29 @@ func _check_factions() -> void:
 	# The build menu checks after this expect Villager buildings still locked.
 	sim.unlocked_tier = unlocked
 	house.aligned = "union"
-	await _click(hud.cog_button.get_global_rect().get_center())
+	await _click(hud.overlays_button.get_global_rect().get_center())
 	await _click(hud.class_overlay_button.get_global_rect().get_center())
-	check(hall != null and view.class_root.get_child_count() > 4, "The overlay draws houses and the hall's reach (%d markers)" % view.class_root.get_child_count())
-	check("Unaligned working class" in hud.class_legend_text.get_parsed_text(), "The class overlay key names its colours")
-	check(view.class_root.visible and view.class_root.get_child_count() > 0 and hud.class_legend.visible and hud.class_overlay_button.button_pressed, "The options toggle shows the class overlay and its key")
+	check(hall != null and view.class_root.get_child_count() > 4, "The overlay draws houses and the hall's reach (%d markers, hall %s)" % [view.class_root.get_child_count(), str(hall != null)])
+	check("Unaligned" in hud.class_legend_text.get_parsed_text() and "Trade unions" in hud.class_legend_text.get_parsed_text(), "The class overlay key names its colours")
+	check(view.class_root.visible and view.class_root.get_child_count() > 0 and hud.class_legend.visible and hud.class_overlay_button.button_pressed, "The overlays toggle shows the class overlay and its key")
 	await _key(KEY_ESCAPE)
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/class-overlay.png")
 	await _key(KEY_F5)
 	check(not view.class_root.visible and not hud.class_legend.visible and not hud.class_overlay_button.button_pressed, "F5 hides the class overlay")
+	# The operations overlay tints each workplace by how it is running.
+	await _click(hud.overlays_button.get_global_rect().get_center())
+	await _click(hud.operations_overlay_button.get_global_rect().get_center())
+	var workplaces := 0
+	for building in sim.buildings.values():
+		if not sim.operation(building).is_empty(): workplaces += 1
+	check(view.operations_root.visible and hud.operations_legend.visible and hud.operations_overlay_button.button_pressed, "The overlays menu shows the operations overlay and its key")
+	check(workplaces > 0 and view.operations_root.get_child_count() == workplaces * 2, "Every workplace gets a plate and a marker (%d for %d workplaces)" % [view.operations_root.get_child_count(), workplaces])
+	await _key(KEY_ESCAPE)
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://artifacts/operations-overlay.png")
+	await _key(KEY_F6)
+	check(not view.operations_root.visible and not hud.operations_legend.visible, "F6 hides the operations overlay")
 
 ## Opens one of the faction's candidate offers by type (and pledge), or {}.
 func _offer(sim, id: String, type: String, pledge: String = "") -> Dictionary:
@@ -431,6 +555,7 @@ func _move_cell(cell: Vector2i) -> void:
 
 func _check_building_rotation() -> void:
 	view._restart()
+	view.sim.construction_sites = false
 	view._set_speed(0)
 	await _choose_build("storehouse")
 	var anchor := _cell(22,23)
@@ -475,7 +600,7 @@ func _check_building_rotation() -> void:
 	check(not view.hud.rotate_button.visible and view.tool.rotation_quarters == 0, "Road strokes have no building rotation")
 	await _key(KEY_ESCAPE)
 	await _click_cell(anchor+Vector2i(1,2))
-	check("2 × 3" in view.hud.inspector.get_parsed_text() and "90°" in view.hud.inspector.get_parsed_text(), "Inspector shows the placed footprint and facing")
+	check("2 × 3" in view.hud.details_text.get_parsed_text() and "90°" in view.hud.details_text.get_parsed_text(), "Inspector details show the placed footprint and facing")
 	await _key(KEY_ESCAPE)
 	await _click(view.hud.demolish_button.get_global_rect().get_center())
 	await _click_cell(anchor+Vector2i(1,2))
@@ -569,19 +694,19 @@ func _check_food_overlay() -> void:
 	check(not view.food_overlay.visible and not hud.food_legend.visible and not hud.food_overlay_button.button_pressed, "F7 hides the food overlay")
 	# The food button sits on the top row and opens its breakdown and the overlay.
 	var food_rect: Rect2 = hud.food_button.get_global_rect()
-	check(hud.food_button.visible and hud.food_button.text.begins_with("Food") and food_rect.position.x >= hud.stock_bar.get_global_rect().end.x and food_rect.end.x < hud.map_button.get_global_rect().position.x, "The food button sits between the stock bar and the top-right buttons (%s)" % hud.food_button.text)
+	check(hud.food_button.visible and hud.stock_bar.get_global_rect().encloses(food_rect) and hud.food_button.text.begins_with(str(hud.food_total)), "The food chip leads the top bar with food stored and its balance (%s)" % hud.food_button.text)
 	await _click(food_rect.get_center())
 	hud.refresh(sim,-1,"inspect")
 	var breakdown: String = hud.food_text.get_parsed_text()
-	check(hud.food_menu.visible and view.food_overlay.visible and hud.food_map_toggle.button_pressed, "The food button opens its breakdown and the food overlay")
-	check("Needs" in breakdown and "By food" in breakdown and "needed" in breakdown, "The breakdown shows needs and each food's income and use")
+	check(hud.food_menu.visible and view.food_overlay.visible and hud.food_overlay_button.button_pressed, "The food button opens its breakdown and the food overlay")
+	check("Stored" in breakdown and ("Made by" in breakdown or "Measuring" in hud.food_verdict.get_parsed_text()) and ("needed" in hud.food_verdict.get_parsed_text() or "Measuring" in hud.food_verdict.get_parsed_text()), "The breakdown shows the verdict, stores and each food with its makers")
 	check(hud.blocks_mouse(hud.food_menu.get_global_rect().get_center()), "The food breakdown blocks clicks behind it")
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/food-balance-view.png")
 	await _key(KEY_ESCAPE)
 	check(not hud.food_menu.visible and not hud.food_button.button_pressed, "Escape closes the food breakdown")
 	await _key(KEY_F7)
-	check(not view.food_overlay.visible and not hud.food_map_toggle.button_pressed, "F7 still hides the overlay afterwards")
+	check(not view.food_overlay.visible and not hud.food_overlay_button.button_pressed, "F7 still hides the overlay afterwards")
 	# Placing a field shows how fertile its ground is.
 	await _choose_build("farm")
 	await _move_cell(_cell(12,15))

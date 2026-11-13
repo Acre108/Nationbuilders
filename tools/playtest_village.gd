@@ -26,13 +26,11 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	var sim = view.sim
-	_note("Start: %d buildings, treasury %s, tax %d%%, markup %d%%" % [sim.buildings.size(), Economy.format(sim.treasury), sim.tax_percent, sim.markup_percent])
+	_note("Start: %d buildings, treasury %s, tax %d%%, average markup %d%%" % [sim.buildings.size(), Economy.format(sim.treasury), sim.tax_percent, sim.average_markup()])
 	await _shot("00-start")
-	# Speed 3× through the options menu.
-	await _click(view.hud.cog_button.get_global_rect().get_center())
+	# Speed 3× through the bottom bar.
 	await _click(view.hud.speed_buttons[3].get_global_rect().get_center())
-	await _click(view.hud.close_options_button.get_global_rect().get_center())
-	if view.speed != 3: findings.append("Could not set 3× speed from the options menu")
+	if view.speed != 3: findings.append("Could not set 3× speed from the bottom bar")
 	# Settlers eat berries; the founding stock runs out, so plant bushes early.
 	await _build("berry_bushes")
 	await _build("forester")

@@ -30,6 +30,10 @@ enum Weather { CLEAR, CLOUDY, RAIN, MIST, STORM }
 ## Real minutes per in-game day. 0 freezes the clock, which is the PlacesOS
 ## behaviour: their places were authored at one fixed hour.
 @export_range(0.0, 240.0, 0.5) var day_length_minutes: float = 0.0
+## Real minutes of each day_length_minutes spent between sunset and sunrise.
+## 0 runs every hour at the same pace; the village uses 4 of 12, so the
+## daylight lasts eight minutes and the night four.
+@export_range(0.0, 240.0, 0.5) var night_minutes: float = 0.0
 
 ## The real sun, set at run time by LocationRuntime from the destination
 ## (not saved): latitude in degrees north, NAN for the PlacesOS sun path;

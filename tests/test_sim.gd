@@ -22,7 +22,8 @@ func run(t) -> void:
 	_services(t)
 	_happiness_effects(t)
 	_chapels_and_berries(t)
-	_priority_and_reserve(t)
+	_pay_and_reserve(t)
+	_operations(t)
 	_economy_village(t)
 
 func _chain(t) -> void:
@@ -345,6 +346,8 @@ func _money(t) -> void:
 ## storehouse markup and the purse cap.
 func _treasury(t) -> void:
 	var sim = _fixture()
+	# Reserves are moved by hand here; the automatic target is tested with pay.
+	sim.set_keep_service_reserve(false)
 	var road: Array[Vector2i] = []
 	for x in range(12,27):
 		road.append(Vector2i(x,20))
@@ -409,8 +412,8 @@ func _treasury(t) -> void:
 	house_silver = house.silver
 	sim.economy.settle(sim,house,well.uid,"water")
 	t.check(house.silver == house_silver - water, "A producer sells to a household at the chain price")
-	t.check(sim.set_markup_percent(0) and sim.economy.retail_price(sim,"bread") == bread and not sim.set_markup_percent(Economy.MAX_MARKUP_PERCENT + 1), "Markup is set from 0 to its limit")
-	sim.set_markup_percent(Economy.DEFAULT_MARKUP_PERCENT)
+	t.check(sim.set_pay(store.uid,Building.HIGH) and sim.economy.retail_price(sim,"bread",store) == bread + (bread * Economy.STORE_MARKUP[Building.HIGH] + 50) / 100 and sim.average_markup() == Economy.STORE_MARKUP[Building.HIGH], "A well-paid storehouse charges households its higher markup")
+	sim.set_pay(store.uid,Building.NORMAL)
 	_money_conserved(t,sim,"markup sales")
 	# A storehouse keeps enough silver to restock what the village makes up to
 	# its per-good limit (and at least PURSE_CAP); the rest goes to the treasury
@@ -431,7 +434,7 @@ func _treasury(t) -> void:
 	# Reserves, markup, frustration and the ledger survive a snapshot.
 	sim.transfer_reserve("public",120)
 	sim.transfer_reserve("capital",80)
-	sim.set_markup_percent(40)
+	sim.set_pay(store.uid,Building.HIGH)
 	var restored = Sim.from_snapshot(sim.snapshot())
 	t.check(restored != null and JSON.stringify(restored.snapshot()) == JSON.stringify(sim.snapshot()), "Treasury state round-trips through a snapshot")
 	var tampered: Dictionary = sim.snapshot()
@@ -567,33 +570,63 @@ func _chapels_and_berries(t) -> void:
 		if row.id == "chapel": row.erase("service_radius")
 	t.check(not db.validate(db.goods.values().duplicate(true),rows,db.tiers.values().duplicate(true)), "A providing service needs a radius")
 
-## Labour priority orders staffing; the service reserve target tops up public pay.
-func _priority_and_reserve(t) -> void:
+## Pay orders staffing and moves wages; the service reserve target tops up
+## public pay.
+func _pay_and_reserve(t) -> void:
 	var sim = _fixture()
 	for cell in [Vector2i(12,15),Vector2i(16,15),Vector2i(22,15)]:
 		sim.place("farm",cell)
 	var farms: Array = sim.buildings.values()
 	sim.step(1)
-	t.check(farms[0].staffed and farms[1].staffed and not farms[2].staffed, "Equal priorities staff in placement order")
-	t.check(sim.set_priority(farms[2].uid,Building.HIGH), "Raise a workplace's priority")
+	t.check(farms[0].staffed and farms[1].staffed and not farms[2].staffed, "Equal pay staffs in placement order")
+	t.check(sim.set_pay(farms[2].uid,Building.HIGH), "Raise a workplace's pay")
 	sim.step(1)
-	t.check(farms[2].staffed and farms[0].staffed and not farms[1].staffed, "A high-priority workplace is staffed first")
-	t.check(sim.set_priority(farms[0].uid,Building.LOW), "Lower a workplace's priority")
+	t.check(farms[2].staffed and farms[0].staffed and not farms[1].staffed, "A well-paid workplace is staffed first")
+	t.check(sim.set_pay(farms[0].uid,Building.LOW), "Lower a workplace's pay")
 	sim.step(1)
-	t.check(farms[1].staffed and not farms[0].staffed, "A low-priority workplace is staffed last")
-	t.check(not sim.set_priority(farms[0].uid,3) and not sim.set_priority(9999,Building.HIGH), "Priority must be a known level on a known building")
+	t.check(farms[1].staffed and not farms[0].staffed, "A low-paid workplace is staffed last")
+	t.check(not sim.set_pay(farms[0].uid,3) and not sim.set_pay(9999,Building.HIGH), "Pay must be a known level on a known building")
+	# A raise comes from the treasury at payday, to the crew's families.
+	var raise: int = Economy.pay_bonus(farms[2])
+	t.check(raise > 0 and raise == Economy.PAY_BONUS[Building.HIGH] * farms[2]._crew.size(), "A well-paid workplace's crew is due a raise: %d s" % raise)
+	var public_before: int = sim.period.public_pay
+	sim.economy._adjust_producer_pay(sim)
+	t.check(sim.period.public_pay == public_before + raise, "The treasury pays the raise")
+	_money_conserved(t,sim,"pay raise")
+	# A cut comes out of what the crew's families earned, into the treasury.
 	var road: Array[Vector2i] = []
 	for x in range(12,27):
 		road.append(Vector2i(x,20))
+	var cut = _fixture()
+	cut.place_road(road)
+	cut.place("house",Vector2i(20,21))
+	cut.place("farm",Vector2i(12,15))
+	var low = _find(cut,"farm")
+	cut.set_pay(low.uid,Building.LOW)
+	cut.step(1)
+	var due: int = 0
+	for uid in low._crew:
+		var family = cut.buildings.get(uid)
+		if family != null:
+			family.earned += 10
+			cut.payroll += 10
+			cut.treasury -= 10
+			due += -Economy.PAY_BONUS[Building.LOW]
+	var treasury_before: int = cut.treasury
+	var cuts_before: int = cut.period.pay_cuts
+	cut.economy._adjust_producer_pay(cut)
+	t.check(due > 0 and cut.treasury == treasury_before + due and cut.period.pay_cuts == cuts_before + due, "A low-paid crew gives up %d s to the treasury" % due)
+	_money_conserved(t,cut,"pay cut")
 	sim.place_road(road)
 	sim.place("storehouse",Vector2i(12,21))
 	var store = _find(sim,"storehouse")
 	sim.step(1)
-	t.check(store.crew == 0, "Normal-priority carriers come after every higher job")
-	t.check(sim.set_priority(store.uid,Building.HIGH), "A storehouse's priority ranks its carriers")
+	t.check(store.crew == 0, "Normal-paid carriers come after every better-paid job")
+	t.check(sim.set_pay(store.uid,Building.HIGH), "A storehouse's pay ranks its carriers")
 	sim.step(1)
-	t.check(farms[2].staffed and store.crew == 2 and not farms[1].staffed, "High-priority carriers come after high workplaces but before normal ones")
-	t.check(not sim.set_priority(_find(sim,"storehouse").uid - 999,Building.LOW), "Unknown buildings have no priority")
+	t.check(farms[2].staffed and store.crew == 2 and not farms[1].staffed, "Well-paid carriers come after well-paid workplaces but before normal ones")
+	t.check(Economy.markup(store) == Economy.STORE_MARKUP[Building.HIGH] and sim.average_markup() == Economy.STORE_MARKUP[Building.HIGH], "A storehouse's pay is its markup")
+	t.check(not sim.set_pay(_find(sim,"storehouse").uid - 999,Building.LOW), "Unknown buildings have no pay")
 	# The service reserve target keeps two paydays of upkeep in public pay.
 	var town = _fixture()
 	town.place_road(road)
@@ -660,6 +693,8 @@ func _conservation(t, sim, label: String) -> void:
 		var actual: int = sim.reserve.count(good)
 		for building in sim.buildings.values():
 			actual += building.input.count(good) + building.output.count(good) + building.inventory.count(good)
+		for site in sim.sites.values():
+			actual += site.materials.count(good)
 		for carrier in sim.carriers:
 			if carrier.cargo == good:
 				actual += 1
@@ -673,6 +708,8 @@ func _money_conserved(t, sim, label: String) -> void:
 	var money: int = sim.treasury + sim.payroll + sim.factions.total()
 	for building in sim.buildings.values():
 		money += building.silver
+	for site in sim.sites.values():
+		money += site.silver
 	var expected: int = Economy.FOUNDING_TREASURY + sim.outside_money
 	t.check(money == expected, "%s conserves money: %d == %d" % [label,money,expected])
 	t.check(sim.public_reserve >= 0 and sim.capital_reserve >= 0 and sim.public_reserve + sim.capital_reserve <= sim.treasury, "%s keeps reserves inside the treasury" % label)
@@ -682,3 +719,32 @@ func _fixture(seed_value: int = 73, content = null):
 	var rng = preload("res://sim/rng.gd").new(seed_value)
 	var site = preload("res://sim/world/sites.gd").first_bread(rng,Vector2i(40,40))
 	return Sim.new(seed_value,content,site)
+## The operations overlay's states (VillageSim.operation).
+func _operations(t) -> void:
+	var sim = _fixture()
+	var road: Array[Vector2i] = []
+	for x in range(12,27):
+		road.append(Vector2i(x,20))
+	sim.place_road(road)
+	sim.place("storehouse",Vector2i(12,21))
+	sim.place("house",Vector2i(20,21))
+	sim.place("well",Vector2i(18,21))
+	var store = _find(sim,"storehouse")
+	var house = _find(sim,"house")
+	var well = _find(sim,"well")
+	t.check(sim.operation(well) == "down", "A workplace not yet staffed is down")
+	t.check(sim.operation(house) == "down" and house.happiness == 0, "A house with no needs met yet is red")
+	sim.step(5)
+	var speed: int = Needs.work_speed(Needs.morale(sim))
+	t.check(well.staffed and sim.operation(well) == ("full" if speed == 100 else "limited"), "A staffed well at work runs full, or limited when morale slows it (%s at %d%%)" % [sim.operation(well), speed])
+	t.check(sim.operation(store) in ["limited","ready","full"], "A staffed storehouse works (%s)" % sim.operation(store))
+	sim.set_workers_enabled(well.uid,false)
+	sim.step(1)
+	t.check(sim.operation(well) == "down", "Stopped workers put a workplace down")
+	sim.set_workers_enabled(store.uid,false)
+	sim.step(1)
+	t.check(sim.operation(store) == "down", "A storehouse with its workers stopped is down")
+	house.happiness = 50
+	t.check(sim.operation(house) == "limited", "A house with a need unmet is yellow")
+	house.happiness = 100
+	t.check(sim.operation(house) == "ready", "A house with every need met is green")

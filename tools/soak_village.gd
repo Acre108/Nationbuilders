@@ -1,7 +1,7 @@
 extends SceneTree
 ## Long-run stability soak for the starter village. Headless:
 ##   Godot.exe --headless --path . --script tools/soak_village.gd -- [--minutes=60] [--houses=2] [--seed=73]
-##       [--no-forester] [--every=N] [--tax=PERCENT] [--markup=PERCENT]
+##       [--no-forester] [--every=N] [--tax=PERCENT] [--store-pay=low|normal|high]
 ## Places the scripted starter, then the mill, bakery, a forester and any extra
 ## houses at the first promotion, and prints one row per sampled minute.
 const Sim = preload("res://sim/village_sim.gd")
@@ -28,11 +28,14 @@ func _run() -> void:
 	var sim = Sim.new(seed_value)
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--tax="): sim.set_tax_percent(int(argument.get_slice("=", 1)))
-		elif argument.begins_with("--markup=") and sim.has_method("set_markup_percent"): sim.set_markup_percent(int(argument.get_slice("=", 1)))
 	if not Scenario.starter(sim):
 		printerr("Starter failed: " + sim.last_error)
 		quit(1)
 		return
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--store-pay="):
+			for building in sim.buildings.values():
+				if building.definition.kind == "storehouse": sim.set_pay(building.uid, ["low", "normal", "high"].find(argument.get_slice("=", 1)))
 	while sim.unlocked_tier < 2 and sim.tick < 3000:
 		sim.step(1)
 	if not Scenario.complete_chain(sim):

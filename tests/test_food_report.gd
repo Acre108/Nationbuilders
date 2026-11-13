@@ -30,13 +30,13 @@ func _needs(t) -> void:
 	house.tier = 2
 	report = FoodReport.new().report(sim)
 	t.check(report.needs[0].need == "staple" and is_equal_approx(report.required, float(FoodReport.MINUTE) / Needs.consume_ticks(sim, house)) and report.needs[0].houses == 1, "A Villager family needs staple food at its own rate")
-	# A family of six mouths (Needs.REFERENCE_MOUTHS) eats at the tier's rate: 6 basic or 3 staple a minute.
+	# A family of six mouths (Needs.REFERENCE_MOUTHS) eats at the tier's rate: 3 basic or 1.5 staple a minute.
 	house.adults = 2
 	house.children = 8
 	house.tier = 1
-	t.check(is_equal_approx(FoodReport.new().report(sim).required, 6.0), "Six mouths eat the Settler basket every 100 ticks")
+	t.check(is_equal_approx(FoodReport.new().report(sim).required, 3.0), "Six mouths eat the Settler basket every 100 ticks")
 	house.tier = 2
-	t.check(is_equal_approx(FoodReport.new().report(sim).required, 3.0), "Six mouths eat the Villager basket every 200 ticks")
+	t.check(is_equal_approx(FoodReport.new().report(sim).required, 1.5), "Six mouths eat the Villager basket every 200 ticks")
 
 ## Supply is matched to needs: berries feed no Villager, fish and meat fill
 ## whichever need is short, and stored food buys time.
@@ -54,10 +54,10 @@ func _balance(t) -> void:
 	var report: Dictionary = meter.report(sim)
 	t.check(report.span == FoodReport.MINUTE and is_equal_approx(report.made, 61.0), "Made food is measured per minute: %s" % str(report.made))
 	t.check(is_equal_approx(report.needs[0].supplied, 1.0) and is_equal_approx(report.usable, 1.0), "Berries do not feed Villagers")
-	t.check(report.state == "deficit" and is_equal_approx(report.short, 2.0), "Villagers short of staple food are in deficit: %s %s" % [report.state, str(report.short)])
+	t.check(report.state == "deficit" and is_equal_approx(report.short, 0.5), "Villagers short of staple food are in deficit: %s %s" % [report.state, str(report.short)])
 	sim.reserve.add("bread", 20)
 	report = meter.report(sim)
-	t.check(report.state == "stores" and report.stored == 20 and int(report.minutes_stored) == 6, "Short but stocked lives off stores: %s, %s min" % [report.state, str(report.minutes_stored)])
+	t.check(report.state == "stores" and report.stored == 20 and int(report.minutes_stored) == 13, "Short but stocked lives off stores: %s, %s min" % [report.state, str(report.minutes_stored)])
 	sim.produced.meat = int(sim.produced.get("meat", 0)) + 5
 	report = meter.report(sim)
 	# With Settlers and Villagers both present, fish fills either need but is
@@ -72,9 +72,9 @@ func _balance(t) -> void:
 	var mixed_meter = FoodReport.new()
 	mixed_meter.sample(mixed)
 	mixed.step(FoodReport.MINUTE)
-	mixed.produced.fish = int(mixed.produced.get("fish", 0)) + 6
+	mixed.produced.fish = int(mixed.produced.get("fish", 0)) + 3
 	var both: Dictionary = mixed_meter.report(mixed)
-	t.check(villager != null and both.needs.size() == 2 and is_equal_approx(both.required, 9.0) and is_equal_approx(both.short, 3.0) and is_equal_approx(both.usable, 6.0), "Shared fish is split between needs, not counted twice: short %s" % str(both.short))
+	t.check(villager != null and both.needs.size() == 2 and is_equal_approx(both.required, 4.5) and is_equal_approx(both.short, 1.5) and is_equal_approx(both.usable, 3.0), "Shared fish is split between needs, not counted twice: short %s" % str(both.short))
 	t.check(report.state == "surplus" and is_equal_approx(report.needs[0].supplied, 6.0) and is_equal_approx(report.usable, 6.0), "Meat fills the staple shortfall: %s" % report.state)
 
 ## Producers and why they idle; storage-idle ones count as spare supply.
