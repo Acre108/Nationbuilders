@@ -1,11 +1,14 @@
 # Test tiers:
-#   (no switch)  quick headless checks, a few seconds; run on every change
+#   (no switch)  quick headless checks, about a minute; run on every change
 #   -Headless    every headless check, including whole-campaign saves and the hour-long run
 #   -Full        every suite, one at a time, with a summary; run before committing or at milestones
 # Single suites: -Sites, -View, -Campaign, -WorldMap, -GeneratedSites, -Forestry, -Art, -Buildings, -Environment.
+# A suite still running after its time limit is stopped and reported as failed
+# (a script error leaves Godot running). -TimeoutMinutes overrides every limit.
 # GPU suites open a window; run them one at a time.
 param(
     [string]$Engine = 'C:\Program Files (x86)\Godot\Godot.exe',
+    [int]$TimeoutMinutes = 0,
     [switch]$Full,
     [switch]$Headless,
     [switch]$View,
@@ -43,14 +46,27 @@ $suites = [ordered]@{
     Environment    = @('tests/run_environment_tests.gd', 'environment-tests.log', $false, @())
 }
 
+# Minutes each suite may run before it is treated as hung; others get the default.
+$defaultTimeout = 15
+$timeouts = @{ Quick = 5; Headless = 45 }
+
 function Invoke-Suite([string]$name) {
     $script, $log, $isHeadless, $userArgs = $suites[$name]
     $logFile = Join-Path $artifactDir $log
     $arguments = @('--path', ('"{0}"' -f $projectDir), '--log-file', ('"{0}"' -f $logFile), '--script', $script)
     if ($isHeadless) { $arguments = @('--headless') + $arguments }
     if ($userArgs.Count -gt 0) { $arguments += @('--') + $userArgs }
-    $run = Start-Process -FilePath $Engine -ArgumentList $arguments -WorkingDirectory $projectDir -WindowStyle Hidden -PassThru -Wait
-    return @{ Code = $run.ExitCode; Log = $logFile }
+    $minutes = if ($TimeoutMinutes -gt 0) { $TimeoutMinutes } elseif ($timeouts.ContainsKey($name)) { $timeouts[$name] } else { $defaultTimeout }
+    $run = Start-Process -FilePath $Engine -ArgumentList $arguments -WorkingDirectory $projectDir -WindowStyle Hidden -PassThru
+    # Reading the handle now keeps ExitCode available after the process ends.
+    $null = $run.Handle
+    if (-not $run.WaitForExit($minutes * 60 * 1000)) {
+        Stop-Process -Id $run.Id -Force -ErrorAction SilentlyContinue
+        $run.WaitForExit()
+        return @{ Code = 124; Log = $logFile; TimedOut = $true; Minutes = $minutes }
+    }
+    $run.WaitForExit()
+    return @{ Code = $run.ExitCode; Log = $logFile; TimedOut = $false; Minutes = $minutes }
 }
 
 if ($Full) {
@@ -63,7 +79,8 @@ if ($Full) {
             $summary = Get-Content -LiteralPath $result.Log | Where-Object { $_ -match '\d+ checks, \d+ failures' } | Select-Object -Last 1
         }
         if ($result.Code -ne 0) { $failed += 1 }
-        $status = if ($result.Code -eq 0) { 'ok  ' } else { 'FAIL' }
+        if ($result.TimedOut) { $summary = "hung: stopped after $($result.Minutes) min (see the log's last lines)" }
+        $status = if ($result.Code -eq 0) { 'ok  ' } elseif ($result.TimedOut) { 'TIME' } else { 'FAIL' }
         '{0} {1,-15} {2,5:N0} s  {3}' -f $status, $name, $clock.Elapsed.TotalSeconds, $summary
     }
     if ($failed -gt 0) { "$failed suite(s) failed; logs are in $artifactDir" }
@@ -76,4 +93,5 @@ foreach ($name in @($suites.Keys)) {
 }
 $result = Invoke-Suite $selected
 if (Test-Path -LiteralPath $result.Log) { Get-Content -LiteralPath $result.Log }
+if ($result.TimedOut) { "$selected hung: stopped after $($result.Minutes) min" }
 exit $result.Code

@@ -29,7 +29,8 @@ func _run() -> void:
 	check(view.camera.focus.x > 40 or view.camera.focus.z > 40, "Camera can pan past the old map boundary")
 	view.camera.focus = starting_focus
 	view.camera.refresh()
-	check(view.sim.buildings.size() == 5, "Playable starter has five buildings")
+	var starter_size: int = preload("res://sim/scenario.gd").STARTER.size()
+	check(view.sim.buildings.size() == starter_size, "Playable starter has its %d buildings (%d)" % [starter_size, view.sim.buildings.size()])
 	var bottom_buttons: Array = view.hud.bottom.get_child(0).get_children().filter(func(node): return node is Button)
 	check(bottom_buttons.size() == 6 and view.hud.overlays_button in bottom_buttons and view.hud.speed_buttons[3] in bottom_buttons, "Bottom bar holds speed, Build, Overlays and Demolish")
 	check(not view.hud.sun_button.visible, "The weather panel's sun button is a developer tool, hidden by default")
@@ -88,7 +89,7 @@ func _run() -> void:
 	check(not view.hud.options_menu.visible, "Escape closes options")
 	await _click(view.hud.cog_button.get_global_rect().get_center())
 	await _click(view.hud.restart_button.get_global_rect().get_center())
-	check(view.sim.tick <= 1 and view.sim.buildings.size() == 5 and not view.hud.options_menu.visible, "Options restart resets village and closes menu")
+	check(view.sim.tick <= 1 and view.sim.buildings.size() == starter_size and not view.hud.options_menu.visible, "Options restart resets village and closes menu")
 	view.sim.construction_sites = false
 	view._set_speed(0)
 	await _key(KEY_F12)
@@ -187,7 +188,7 @@ func _run() -> void:
 	view.sim.step(1)
 	view.hud.refresh(view.sim,view.selected_uid,view.tool.selected)
 	var staffed_info: String = view.hud.details_text.get_parsed_text()
-	check(not view.sim.buildings[view.selected_uid].staffed or ("Families" in staffed_info and "Homestead" in staffed_info), "Details name the families its workers come from")
+	check(not view.sim.buildings[view.selected_uid].staffed or ("Families" in staffed_info and "Cottage at" in staffed_info), "Details name the families its workers come from")
 	check(not view.hud.details_text.visible, "Details start folded")
 	await _click(view.hud.details_button.get_global_rect().get_center())
 	check(view.hud.details_text.visible and view.hud.details_button.button_pressed, "The Details button unfolds them")
@@ -240,11 +241,12 @@ func _run() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/inspection-house.png")
 	await _key(KEY_ESCAPE)
+	var before_chain: int = view.sim.buildings.size()
 	await _choose_build("mill")
 	await _click_cell(_cell(16,18))
 	await _choose_build("bakery")
 	await _click_cell(_cell(23,18))
-	check(view.sim.buildings.size() == 7, "Build menu places both chain buildings")
+	check(view.sim.buildings.size() == before_chain + 2, "Build menu places both chain buildings")
 	await _key(KEY_ESCAPE)
 	view.sim.step(500)
 	view._sync_view()
@@ -558,7 +560,8 @@ func _check_building_rotation() -> void:
 	view.sim.construction_sites = false
 	view._set_speed(0)
 	await _choose_build("storehouse")
-	var anchor := _cell(22,23)
+	# East of the woodcutter, on the main road: free in both orientations.
+	var anchor := _cell(26,21)
 	check(view.sim.placement_error("storehouse",anchor,0).is_empty() and view.sim.placement_error("storehouse",anchor,1).is_empty(), "Rotation input fixture fits in both orientations")
 	await _move_cell(anchor)
 	check(view.ghost_root.has_node("Preview") and view.hud.rotate_button.visible, "Building placement shows model preview and Rotate button")
@@ -575,6 +578,9 @@ func _check_building_rotation() -> void:
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png("res://artifacts/rotation-preview.png")
 	await _click_cell(anchor)
+	if not view.sim.grid.occupied.has(anchor):
+		check(false, "World click places the rotated storehouse: %s" % view.sim.last_error)
+		return
 	var placed = view.sim.buildings[view.sim.grid.occupied[anchor]]
 	var model: Node3D = view.building_nodes[placed.uid]
 	check(placed.rotation_quarters == 1 and model.position == preview_position and is_equal_approx(model.rotation.y,preview_rotation), "World click preserves preview orientation and centre")

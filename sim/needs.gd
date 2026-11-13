@@ -97,9 +97,9 @@ static func consume_ticks(sim, house) -> int:
 ## do not stack.
 static func comfort(sim, house) -> int:
 	var best := 0
-	for building in sim.buildings.values():
-		var lift: Variant = building.definition.get("comfort")
-		if not lift is Dictionary or int(lift.happiness) <= best or sim.grid.access(building).is_empty():
+	for building in sim.with_role("comfort"):
+		var lift: Dictionary = building.definition.comfort
+		if int(lift.happiness) <= best or sim.grid.access(building).is_empty():
 			continue
 		var cells: int = 0 if building == house else sim.grid.distance(building, house)
 		if cells >= 0 and cells <= int(lift.radius):

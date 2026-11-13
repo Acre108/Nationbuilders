@@ -31,6 +31,9 @@ var _cache_revision := -1
 var _access_cache: Dictionary = {}
 var _fields: Dictionary = {}
 var _networks: Dictionary = {}
+## distance() results by building uid pair; carriers' job searches ask the
+## same pairs every tick.
+var _distances: Dictionary = {}
 
 func _init(site) -> void:
 	width = site.width
@@ -128,6 +131,7 @@ func _sync_caches() -> void:
 		_access_cache.clear()
 		_fields.clear()
 		_networks.clear()
+		_distances.clear()
 
 ## The connected road network a carrier at this cell walks on, or -1 where no
 ## route can start. Cells on one network reach exactly the same buildings.
@@ -170,6 +174,11 @@ func access(building) -> Array[Vector2i]:
 
 ## The length in cells of route_between(a, b), or -1 when no road joins them.
 func distance(a, b) -> int:
+	_sync_caches()
+	var key := Vector2i(a.uid, b.uid)
+	var known = _distances.get(key)
+	if known != null:
+		return known
 	var field := _field(a)
 	var best := -1
 	for goal in access(b):
@@ -177,6 +186,7 @@ func distance(a, b) -> int:
 			var cells: int = int(field[goal]) + 1
 			if best < 0 or cells < best:
 				best = cells
+	_distances[key] = best
 	return best
 
 ## Whether route_to(cell, access(building)) would find a route.

@@ -27,6 +27,9 @@ func _run() -> void:
 		if script == null or not script.can_instantiate():
 			check(false, "Could not compile " + path)
 			continue
+		var started := Time.get_ticks_msec()
+		var failed_before := failures.size()
 		script.new().run(self)
+		print("  %-28s %6.1f s%s" % [path.get_file(), (Time.get_ticks_msec() - started) / 1000.0, "" if failures.size() == failed_before else "  (%d failed)" % (failures.size() - failed_before)])
 	print("HEARTHLANDS%s: %d checks, %d failures" % [" (quick)" if quick else "", checks, failures.size()])
 	quit(0 if failures.is_empty() else 1)

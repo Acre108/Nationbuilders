@@ -66,7 +66,7 @@ The default village map is **100 × 100 tiles**. The village sits in a central c
 | Top-right cog | Options: site overview, restart village |
 | F12 / `-- --dev` | Developer tools: the weather panel (sun button) |
 
-Roads must share an edge with a building. Carriers use only road tiles, with no diagonal movement. An occupied road cannot be demolished until its carrier moves away. Disconnecting a route strands deliveries until a connection is restored. When a destination is demolished, any carried item is returned to its owner's storehouse if reachable.
+Roads must share an edge with a building. Carriers use only road tiles, with no diagonal movement. A road under a working carrier cannot be demolished until it moves away; an idle carrier standing there goes back to its storehouse. Disconnecting a route strands deliveries until a connection is restored. When a destination is demolished, any carried item is returned to its owner's storehouse if reachable.
 
 ## Test
 
@@ -74,10 +74,10 @@ Tests run in two tiers:
 
 | Tier | Command | Time | When |
 | --- | --- | ---: | --- |
-| Quick | `tools/run_tests.ps1` | ~7 s | After every change |
+| Quick | `tools/run_tests.ps1` | ~1 min | After every change |
 | Full | `tools/run_tests.ps1 -Full` | ~4 min | Before committing, and at milestones |
 
-The quick tier is the headless simulation suite without its slow sections: whole-campaign saves and the hour-long village run. The full tier runs every suite one at a time and prints a one-line summary for each. Logs are written to `artifacts/`. Single suites run with `-Headless` (every headless check), `-Sites`, `-View`, `-Campaign`, `-WorldMap`, `-GeneratedSites`, `-Forestry`, `-Art`, `-Buildings` or `-Environment`. Add `-View` to the quick tier when changing the village view.
+The quick tier is the headless simulation suite without its slow sections: whole-campaign saves and the long village runs (the faction long runs and contest batches, the economy village's four minutes and the meat chain). The runner prints each test file's time. A suite still running after its time limit (5 minutes for the quick tier, 45 for `-Headless`, 15 for the rest; `-TimeoutMinutes` overrides them) is stopped and reported as failed with exit code 124, since a script error leaves Godot running. The full tier runs every suite one at a time and prints a one-line summary for each. Logs are written to `artifacts/`. Single suites run with `-Headless` (every headless check), `-Sites`, `-View`, `-Campaign`, `-WorldMap`, `-GeneratedSites`, `-Forestry`, `-Art`, `-Buildings` or `-Environment`. Add `-View` to the quick tier when changing the village view.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1

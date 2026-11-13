@@ -4,6 +4,7 @@ const Scenario = preload("res://sim/scenario.gd")
 const Sim = preload("res://sim/village_sim.gd")
 const Economy = preload("res://sim/economy.gd")
 const HexMath = preload("res://sim/world/hex_math.gd")
+const Building = preload("res://sim/building.gd")
 const DIRECTORY := "res://artifacts/campaign-test-saves"
 
 func run(t) -> void:
@@ -27,7 +28,7 @@ func run(t) -> void:
 	var forester_cell := _free_cell(sim, "forester", 1)
 	t.check(sim.place("forester", forester_cell, 1), "Save fixture includes rotated construction")
 	sim.step(240)
-	t.check(Scenario.complete_chain(sim), "Saved village has a working bread chain")
+	t.check(_place_chain(sim), "Saved village has a working bread chain: " + sim.last_error)
 	sim.step(173)
 	var in_transit := false
 	for carrier in sim.carriers: in_transit = in_transit or not carrier.job.is_empty()
@@ -130,6 +131,41 @@ func _road_budget(t) -> void:
 		sim.step(120)
 		restored.step(120)
 		t.check(JSON.stringify(sim.snapshot()) == JSON.stringify(restored.snapshot()),"Exactly-funded road state continues deterministically after restore")
+
+## The bread chain on a generated site, whose rivers and relief can cover a
+## layout cell: each building at its layout cell where it fits, otherwise at
+## the nearest free cell to the founding spot beside a road. Built at once.
+func _place_chain(sim) -> bool:
+	var sites: bool = sim.construction_sites
+	sim.construction_sites = false
+	var placed := true
+	for entry in Scenario.CHAIN:
+		var cell: Vector2i = entry[1] + Scenario.offset(sim)
+		if not sim.placement_error(entry[0], cell).is_empty():
+			cell = _road_cell(sim, entry[0])
+		if cell.x < 0 or not sim.place(entry[0], cell):
+			sim.last_error = "%s: %s" % [entry[0], sim.last_error if cell.x >= 0 else "no free cell beside a road"]
+			placed = false
+			break
+	sim.construction_sites = sites
+	return placed
+
+func _road_cell(sim, building_id: String) -> Vector2i:
+	var centre: Vector2i = sim.site.founding_spot
+	var best := Vector2i(-1,-1)
+	var best_distance := 999999
+	for y in range(centre.y - 15, centre.y + 16):
+		for x in range(centre.x - 15, centre.x + 16):
+			var cell := Vector2i(x,y)
+			var distance: int = absi(x - centre.x) + absi(y - centre.y)
+			if distance >= best_distance or not sim.placement_error(building_id, cell).is_empty():
+				continue
+			# The grid caches frontage by uid, so each probe needs its own.
+			if sim.grid.access(Building.new(3000000 + y * 1000 + x, sim.db.buildings[building_id], cell)).is_empty():
+				continue
+			best = cell
+			best_distance = distance
+	return best
 
 func _free_cell(sim, building_id: String, rotation: int = 0) -> Vector2i:
 	for y in sim.grid.height:

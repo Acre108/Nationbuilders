@@ -17,6 +17,8 @@ func _run() -> void:
 	view = load("res://view/village_view.tscn").instantiate()
 	root.add_child(view)
 	view._set_speed(0)
+	# Play places construction sites; these checks need finished buildings.
+	view.sim.construction_sites = false
 	view.atmosphere.set_process(false)
 	view.foliage.set_process(false)
 	view.hud.visible = false

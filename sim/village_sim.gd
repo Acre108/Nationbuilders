@@ -97,6 +97,9 @@ var _idle_misses: Dictionary = {}
 var _idle_misses_version := -1
 ## Forestry buildings whose last search found no site; see forestry.gd.
 var _forestry_misses: Dictionary = {}
+## Buildings by role, derived and never saved; see with_role().
+var _roles: Dictionary = {}
+var _roles_key: Array = []
 
 ## Without a site package the run uses the default 100x100 coastal village.
 func _init(seed_value: int = 73, content = null, site_package = null) -> void:
@@ -430,10 +433,13 @@ func place_road(cells: Array) -> bool:
 
 func demolish(cell: Vector2i) -> bool:
 	last_error = ""
-	# An occupied road cannot disappear beneath a walking carrier.
+	# An occupied road cannot disappear beneath a walking carrier. An idle,
+	# empty-handed carrier may stand anywhere indefinitely, so it does not hold
+	# the road: left off the roads, it returns to its storehouse's frontage on
+	# its next update (_update_carrier).
 	if grid.roads.has(cell):
 		for carrier in carriers:
-			if carrier.cell == cell:
+			if carrier.cell == cell and (carrier.stage != "idle" or not carrier.cargo.is_empty()):
 				last_error = "A carrier is on this road"
 				return false
 		grid.roads.erase(cell)
@@ -639,10 +645,9 @@ func set_pay(uid: int, level: int) -> bool:
 func average_markup() -> int:
 	var total := 0
 	var count := 0
-	for building in buildings.values():
-		if building.definition.kind == "storehouse":
-			total += Economy.markup(building)
-			count += 1
+	for building in with_role("storehouse"):
+		total += Economy.markup(building)
+		count += 1
 	return Economy.DEFAULT_MARKUP_PERCENT if count == 0 else roundi(float(total) / count)
 
 ## Keeps SERVICE_RESERVE_PAYDAYS of services' upkeep in the public pay
@@ -1016,10 +1021,30 @@ func nearest_store(building):
 			distance = cells
 	return nearest
 
+## The buildings with a role: "storehouse", "provides" (a service, such as a
+## chapel) or "comfort" (an inn). Houses ask every tick, so the lists are kept
+## until a building comes or goes (each such change bumps the grid revision or
+## next_uid, or changes the count). Read live state such as staffing or pay
+## from the buildings themselves; the lists only say who to ask.
+func with_role(role: String) -> Array:
+	var key := [grid.revision, next_uid, buildings.size()]
+	if key != _roles_key:
+		_roles_key = key
+		_roles = {"storehouse": [], "provides": [], "comfort": []}
+		for building in buildings.values():
+			var row: Dictionary = building.definition
+			if row.kind == "storehouse":
+				_roles.storehouse.append(building)
+			if row.has("provides"):
+				_roles.provides.append(building)
+			if row.get("comfort") is Dictionary:
+				_roles.comfort.append(building)
+	return _roles[role]
+
 ## Whether a staffed building providing this service (a chapel) is within its
 ## service radius of the house, by road.
 func serves(house, service: String) -> bool:
-	for building in buildings.values():
+	for building in with_role("provides"):
 		var row: Dictionary = building.definition
 		if row.get("provides") == service and building.staffed:
 			var cells: int = grid.distance(building, house)

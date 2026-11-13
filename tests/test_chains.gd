@@ -11,7 +11,9 @@ func run(t) -> void:
 	_content(t)
 	_category_needs(t)
 	_fisher(t)
-	_meat_chain(t)
+	# The meat chain grows a village over about 10,000 ticks: full tier only.
+	if t.get("quick") != true:
+		_meat_chain(t)
 
 func _content(t) -> void:
 	var db = ContentDB.new()

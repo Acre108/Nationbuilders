@@ -20,7 +20,10 @@ func run(t) -> void:
 	_harsh_sites(t)
 	_no_factions(t)
 	_snapshot(t)
-	_long_run(t, 3000 if t.get("quick") == true else 18000)
+	# Long runs, and the contest's batch comparison, are full tier only.
+	var full: bool = t.get("quick") != true
+	if full:
+		_long_run(t, 18000)
 	_buyers_data(t)
 	_sales(t)
 	_owner_share(t)
@@ -30,7 +33,8 @@ func run(t) -> void:
 	_ownership_snapshot(t)
 	_batch_sizes(t)
 	# An hour of play is 36000 ticks.
-	_owned_long_run(t, 3000 if t.get("quick") == true else 36000)
+	if full:
+		_owned_long_run(t, 36000)
 	# The contest for the working class (item 3).
 	_contest_data(t)
 	_halls(t)
@@ -42,7 +46,8 @@ func run(t) -> void:
 	_clustering(t)
 	_settlers(t)
 	_contest_snapshot(t)
-	_contest_batches(t)
+	if full:
+		_contest_batches(t)
 	# Power, favour, offers and pledges (items 4 to 6).
 	_power(t)
 	_stance_terms(t)

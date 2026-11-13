@@ -31,12 +31,8 @@ Already done: construction sites, and phase 1 feedback (sounds, pops and dust, a
 
 ## Tests
 
-17. **The view suite hangs on any script error,** because the test's coroutine stops and Godot never quits. Give `tools/run_tests.ps1` a timeout per suite, so a hang reports as a failure.
-18. **Five view checks fail on HEAD:**
-    - the starter building count;
-    - the restart from Options;
-    - the families named in a well's details;
-    - the bread chain placed from the build menu;
-    - the rotation fixture, with its script error.
+Done on 13 November 2026: `tools/run_tests.ps1` stops a hung suite after a time limit and reports it as failed (exit code 124); the five stale view checks and the campaign chain fixture follow the current starter and generated sites; the quick tier skips the long runs and prints each file's time.
 
-    One full headless check fails too: the chain cottage at (18, 24) lands on a river on the campaign's generated map. Bring the fixtures in line with the current starter and layouts.
+17. **The hour-long logistics run fails on the economy, not logistics.** "Both houses stay Villagers for an hour" reports 37 minutes below. Silver pools in the first cottage, the founders' home (417 to 531 silver over the hour), while the bakery holds none and cannot buy the flour sitting in the storehouse, the other cottages hover at 0 to 15 silver, and the treasury cannot pay the forester. Starter villages also have no chapel, so every Villager house misses one need. Decide how savings flow back (households spending surplus savings, founders as their own household, or a wage or price change), then retune the test, which still speaks of "both houses" from before family cottages.
+18. **Two more full-tier checks fail, outside the village sim:** site generation's "Actual generated lake site keeps its basin and a natural clearing" (`-Sites`), and the art suite's "Zero breeze freezes crown deformation" (`-Art`), likely since the atmosphere changes of 16 October.
+19. **The quick tier takes about a minute,** most of it in `test_factions.gd`. A carrier's job search costs about 0.6 ms in GDScript, repeated each tick while houses wait for goods nobody has; caching failed searches across ticks would be the next big saving.

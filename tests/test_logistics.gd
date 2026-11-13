@@ -86,7 +86,9 @@ func _long_run(t) -> void:
 	print("LONG RUN: 60 min in %d ms; store %d/%d; bread %d; logs %d (lowest %d)" % [Time.get_ticks_msec() - clock, store.inventory.total(), store.inventory.capacity, sim.stock("bread"), sim.stock("logs"), lowest_logs])
 	t.check(demoted_minutes == 0, "Both houses stay Villagers for an hour: %d minutes below" % demoted_minutes)
 	t.check(crowded_minutes == 0, "No good is crowded out of the storehouse: %d crowded minutes" % crowded_minutes)
-	t.check(lowest_logs >= limit / 2 and sim.stock("logs") >= logs_at_20, "Construction logs hold steady: lowest %d, %d at minute 20, %d at the end" % [lowest_logs, logs_at_20, sim.stock("logs")])
+	# Logs sit at the storehouse's per-good limit, where one log in a carrier's
+	# arms moves the count by one: allow that, not a drain.
+	t.check(lowest_logs >= limit / 2 and sim.stock("logs") >= logs_at_20 - 1, "Construction logs hold steady: lowest %d, %d at minute 20, %d at the end" % [lowest_logs, logs_at_20, sim.stock("logs")])
 	SimTests.new()._conservation(t, sim, "hour-long run")
 
 ## Cached routes and reservations must equal a fresh search and a full scan.

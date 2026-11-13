@@ -114,11 +114,15 @@ func _disconnection(t) -> void:
 	house.children = 8
 	# A disconnected isolated house must not consume remote stock.
 	for attempt in 100:
-		for tile in sim.grid.access(house):
+		for tile in sim.grid.access(house).duplicate():
 			sim.demolish(tile)
 		if sim.grid.access(house).is_empty():
 			break
 		sim.step(1)
+	t.check(sim.grid.access(house).is_empty(), "The house's road can be cut, even where an idle carrier stood")
+	# Idle carriers left off the roads go back to their storehouse's frontage.
+	sim.step(1)
+	t.check(sim.carriers.all(func(c): return c.stage != "idle" or sim.grid.roads.has(c.cell) or sim.grid.access(sim.buildings[c.owner]).is_empty()), "Idle carriers left off the roads return to their storehouse")
 	# It eats its pantry, its settled happiness falls below the threshold, and
 	# it stays there for the downgrade time.
 	sim.step(2000)
@@ -668,7 +672,10 @@ func _economy_village(t) -> void:
 	for house in houses:
 		for service in Needs.counted_services(sim.db.tiers[2]):
 			t.check(sim.serves(house, service), "Economy village house at %s has a %s in range" % [house.cell, service])
-	# Thirty-odd family houses fill their pantries one delivery at a time.
+	# Thirty-odd family houses fill their pantries one delivery at a time. Four
+	# simulated minutes of a 64-building village is slow: full tier only.
+	if t.get("quick") == true:
+		return
 	sim.step(2400 - sim.tick)
 	t.check(houses.all(func(house): return house.tier == 2), "Every economy village house reaches Villagers within 4 minutes")
 	_money_conserved(t, sim, "economy village")
